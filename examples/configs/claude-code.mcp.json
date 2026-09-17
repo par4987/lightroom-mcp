@@ -1,0 +1,9 @@
+{
+  "_comment": "Claude Code: añade este bloque a .mcp.json del proyecto o usa `claude mcp add lightroom -- npx -y @pired/lightroom-mcp`. Desde fuente: node <ruta>/pired-lightroom-mcp/server/dist/index.js",
+  "mcpServers": {
+    "lightroom": {
+      "command": "npx",
+      "args": ["-y", "@pired/lightroom-mcp"]
+    }
+  }
+}

@@ -1,0 +1,189 @@
+local LrApplication = import 'LrApplication'
+local LrTasks = import 'LrTasks'
+local LrPathUtils = import 'LrPathUtils'
+local LrFileUtils = import 'LrFileUtils'
+
+local PhotoLookup = require 'PhotoLookup'
+local Log = require 'Log'
+
+local PreviewHandler = {}
+
+-- =====================================================================
+-- get_photo_preview — let the AI actually SEE the photo
+-- =====================================================================
+--
+-- The Lightroom SDK can render a JPEG of any catalog photo through
+-- photo:requestJpegThumbnail(width, height, callback). The callback runs
+-- asynchronously on a background render task, so we poll a completion
+-- flag with LrTasks.sleep() instead of blocking.
+--
+-- The JPEG bytes are written to a file next to the MCP token
+-- (<home>/.config/lightroom-mcp/previews/) so the MCP server can read
+-- them back and attach the image inline to the tool response (Claude
+-- Desktop renders image content blocks in the conversation). Writing to
+-- disk keeps the large binary out of the line-delimited JSON socket
+-- protocol entirely.
+--
+-- Old previews are pruned to bound disk usage: the folder keeps the
+-- newest MAX_FILES_KEPT files (filenames embed a unix timestamp, so a
+-- lexicographic sort on the timestamp field approximates mtime order
+-- without a stat() API, which LrFileUtils does not expose).
+
+local NAMED_SIZES = {
+    small = 240,
+    medium = 640,
+    large = 1024,
+}
+
+local MIN_PIXELS = 32
+local MAX_PIXELS = 2048
+local RENDER_TIMEOUT_S = 60
+local POLL_INTERVAL_S = 0.1
+local MAX_FILES_KEPT = 60
+local FILE_PREFIX = "preview_"
+
+local function previewsDir()
+    local config = LrPathUtils.child(
+        LrPathUtils.getStandardFilePath("home"), ".config")
+    local base = LrPathUtils.child(
+        LrPathUtils.child(config, "lightroom-mcp"), "previews")
+    LrFileUtils.createAllDirectories(base)
+    return base
+end
+
+-- "DSC_0123 (cópia).NEF" -> "dsc_0123_cpa" : Windows-safe, ascii-ish.
+local function sanitizeBase(filename)
+    local base = filename or "photo"
+    base = base:gsub("%.[^%.]*$", "") -- drop extension
+    base = base:lower():gsub("[^%w%-_]", "")
+    if #base > 40 then base = base:sub(1, 40) end
+    if base == "" then base = "photo" end
+    return base
+end
+
+-- Delete oldest generated previews past MAX_FILES_KEPT. Filenames are
+-- preview_<id>_<size>px_<timestamp>.jpg; extracting the timestamp keeps
+-- the sort stable across ids/sizes. Best-effort, never fatal.
+local function pruneOldPreviews(dir)
+    local entries = LrFileUtils.directoryContents(dir) or {}
+    local stamped = {}
+    for _, name in ipairs(entries) do
+        local ts = name:match("^" .. FILE_PREFIX .. ".-(%d+)%.jpg$")
+        if ts then table.insert(stamped, { name = name, ts = ts }) end
+    end
+    if #stamped <= MAX_FILES_KEPT then return end
+    table.sort(stamped, function(a, b) return a.ts < b.ts end)
+    for i = 1, #stamped - MAX_FILES_KEPT do
+        pcall(function() LrFileUtils.delete(LrPathUtils.child(dir, stamped[i].name)) end)
+    end
+end
+
+function PreviewHandler.getPhotoPreview(args)
+    args = args or {}
+    if not args.photo_id then
+        error("photo_id is required")
+    end
+
+    local requested = args.size or "medium"
+    local pixelSize
+    if type(requested) == "string" then
+        pixelSize = NAMED_SIZES[requested]
+        if not pixelSize then
+            error("size must be 'small', 'medium', 'large' or a number of pixels")
+        end
+    elseif type(requested) == "number" then
+        pixelSize = math.floor(requested)
+        if pixelSize < MIN_PIXELS or pixelSize > MAX_PIXELS then
+            error(string.format("size must be between %d and %d pixels", MIN_PIXELS, MAX_PIXELS))
+        end
+    else
+        error("size must be 'small', 'medium', 'large' or a number of pixels")
+    end
+
+    local catalog = LrApplication.activeCatalog()
+
+    local photo, filename, dimensions
+    catalog:withReadAccessDo(function()
+        photo = PhotoLookup.resolveOne(catalog, args.photo_id)
+        if photo then
+            filename = photo:getFormattedMetadata('fileName')
+            dimensions = photo:getRawMetadata('dimensions')
+        end
+    end)
+
+    if not photo then
+        error("No photo matched photo_id")
+    end
+
+    -- requestJpegThumbnail renders asynchronously and invokes its callback
+    -- from a background task; both the render and the poll sleep yield, so
+    -- they stay OUTSIDE any catalog access gate (issues #134/#124).
+    local jpegData, renderError, done = nil, nil, false
+    photo:requestJpegThumbnail(pixelSize, pixelSize, function(jpg, err)
+        if err then
+            renderError = tostring(err)
+        else
+            jpegData = jpg
+        end
+        done = true
+    end)
+
+    local waited = 0
+    while not done and waited < RENDER_TIMEOUT_S do
+        LrTasks.sleep(POLL_INTERVAL_S)
+        waited = waited + POLL_INTERVAL_S
+    end
+
+    if renderError then
+        error("Lightroom failed to render the preview: " .. renderError)
+    end
+    if not done then
+        error(string.format(
+            "Timed out after %ds waiting for Lightroom to render the preview "
+            .. "(a photo still pending standard previews can do this; retry "
+            .. "after Lightroom finishes building previews)", RENDER_TIMEOUT_S))
+    end
+    if not jpegData or #jpegData == 0 then
+        error("Lightroom returned no image data for this photo")
+    end
+
+    local dir = previewsDir()
+    local outName = string.format("%sp%d_%dpx_%d.jpg",
+        FILE_PREFIX, photo.localIdentifier or 0, pixelSize, os.time())
+    local outPath = LrPathUtils.child(dir, outName)
+
+    local fh, openErr = io.open(outPath, "wb")
+    if not fh then
+        error("failed to write preview file: " .. tostring(openErr))
+    end
+    fh:write(jpegData)
+    fh:close()
+
+    pruneOldPreviews(dir)
+
+    Log.info(string.format("getPhotoPreview: wrote %s (%d bytes, %dpx)",
+        outPath, #jpegData, pixelSize))
+
+    return {
+        success = true,
+        file_path = outPath,
+        size_bytes = #jpegData,
+        mime_type = "image/jpeg",
+        size_px = pixelSize,
+        photo = {
+            id = photo.localIdentifier,
+            path = photo:getRawMetadata('path'),
+            filename = filename,
+            width = dimensions and dimensions.width or nil,
+            height = dimensions and dimensions.height or nil,
+        },
+        -- Marker consumed by the MCP server (tool-handler.ts): the JPEG is
+        -- on disk and small enough to inline as an MCP image content block.
+        image_attached_by_server = true,
+        message = string.format(
+            "Preview written to %s and attached as an image (%d bytes, %dpx)",
+            outPath, #jpegData, pixelSize),
+    }
+end
+
+return PreviewHandler

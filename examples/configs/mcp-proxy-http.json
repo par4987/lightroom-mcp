@@ -1,0 +1,9 @@
+{
+  "_comment": "Open WebUI / LibreChat y otros frontends que solo hablan MCP-HTTP: monta un puente stdio→HTTP con mcp-proxy (pip install mcp-proxy) y registra la URL que imprime. Ejemplo: mcp-proxy --port 8808 -- npx -y @pired/lightroom-mcp (o, desde fuente: node <RUTA>/pired-lightroom-mcp/server/dist/index.js)",
+  "url": "http://127.0.0.1:8808/mcp",
+  "_notes": [
+    "mcp-proxy expone el servidor stdio como SSE/HTTP en localhost; no abras ese puerto fuera de tu máquina.",
+    "LibreChat: archivo librechat.yaml → mcpServers: lightroom: serverUrl: http://127.0.0.1:8808/mcp",
+    "Open WebUI: ajustes > Tools > añadir servidor MCP con esa misma URL."
+  ]
+}

@@ -1,0 +1,40 @@
+name: Lua Tests
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugin/**'
+      - '.busted'
+      - '.github/workflows/lua-test.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'plugin/**'
+      - '.busted'
+      - '.github/workflows/lua-test.yml'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  busted:
+    name: Run busted specs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Install Lua + luarocks
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y lua5.4 liblua5.4-dev luarocks
+
+      - name: Install busted
+        run: sudo luarocks install busted
+
+      - name: Run busted
+        run: busted

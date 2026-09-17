@@ -1,0 +1,10 @@
+{
+  "_comment": "Clientes MCP genéricos que aceptan un comando stdio (Cherry Studio, 5ire, Cline, Roo Code, etc.): comando + argumentos. En Cherry Studio: Ajustes > Servidores MCP > Añadir (tipo stdio). Desde fuente: command=node, args=[\"<RUTA>/pired-lightroom-mcp/server/dist/index.js\"]",
+  "name": "lightroom",
+  "type": "stdio",
+  "command": "npx",
+  "args": ["-y", "@pired/lightroom-mcp"],
+  "env": {
+    "LIGHTROOM_MCP_TOOLS": "all"
+  }
+}
