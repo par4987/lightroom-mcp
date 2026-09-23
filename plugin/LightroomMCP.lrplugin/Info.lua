@@ -7,7 +7,7 @@ return {
 
     LrPluginInfoUrl = "https://github.com/par4987/lightroom-mcp",
 
-    VERSION = { major=3, minor=2, revision=1, build=0 },
+    VERSION = { major=3, minor=2, revision=2, build=0 },
 
     LrPluginInfoProvider = 'PluginInfoProvider.lua',
     LrInitPlugin = 'PluginInit.lua',

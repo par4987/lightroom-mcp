@@ -1,6 +1,6 @@
 {
   "name": "@pired/lightroom-mcp",
-  "version": "3.2.1",
+  "version": "3.2.2",
   "description": "MCP server for Adobe Lightroom Classic with hybrid AI Denoise, spot removal, local + AI + range masks, tone curves, Auto tone/WB, inline JPEG previews, smart collections and watermarking. Fork of Automaat/lightroom-mcp.",
   "type": "module",
   "main": "dist/index.js",
