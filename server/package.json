@@ -43,14 +43,14 @@
   ],
   "author": "pired (fork), Marcin Skalski (original)",
   "license": "MIT",
-  "homepage": "https://github.com/pired/lightroom-mcp#readme",
+  "homepage": "https://github.com/par4987/lightroom-mcp#readme",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/pired/lightroom-mcp.git",
+    "url": "git+https://github.com/par4987/lightroom-mcp.git",
     "directory": "server"
   },
   "bugs": {
-    "url": "https://github.com/pired/lightroom-mcp/issues"
+    "url": "https://github.com/par4987/lightroom-mcp/issues"
   },
   "engines": {
     "node": ">=18"
