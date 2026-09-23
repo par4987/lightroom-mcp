@@ -2,7 +2,7 @@
   "_about": [
     "Reference cases for the photo-edit-advisor skill.",
     "",
-    "Photos are named by catalogue path and id, never bundled: the RAW files live",
+    "Photos are named by catalogue id and filename, never bundled: the RAW files live",
     "on the photographer's disk and the JPEGs are re-exported per run. That keeps",
     "the suite in version control without a binary fixture set, and it means the",
     "expectations below describe the PHOTOS, not a particular export.",
