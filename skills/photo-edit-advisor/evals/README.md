@@ -22,11 +22,14 @@ DO work everywhere; the evals are a manual gate against the real catalogue.
 1. Check the `requires` notes in `cases.json`. Two cases need opposite states of
    the same photo — `arocena-dust-present` needs Dust Removal absent,
    `removal-verified` needs it applied — so they cannot both be exported at once.
-2. Create the export directory. `export_photos` does **not** create it and fails
-   with a Lightroom error in the UI's language if it is missing.
-3. Export every file named in `cases.json` as JPEG quality 92, at full size, into
-   that one directory.
-4. Run it:
+   Discarding the removal is a manual step in the Lightroom UI (the SDK cannot do
+   it; the notes on that case record what was tried), so `arocena-dust-present`
+   stays blocked until that step is taken, and `arocena-clean-frame-dust` covers
+   the detection it would have checked.
+2. Export every file named in `cases.json` as JPEG quality 92, at full size, into
+   that one directory. `export_photos` creates the destination folder when it is
+   missing.
+3. Run it:
 
 ```bash
 python scripts/run_evals.py /path/to/exports
@@ -47,7 +50,9 @@ Every number in `cases.json` came from a measurement, and the dust positions wer
 cross-checked against Lightroom's own Dust Removal regions (agreement 0.0005 to
 0.008 of frame width). If a case starts failing, check whether the photo was
 edited before assuming the code broke — that is the likeliest cause, and it is why
-each case carries a `requires` note.
+each case carries a `requires` note. When a drift is confirmed, re-measure and
+record the date and the reason in the case rather than re-tuning the code to an
+old number.
 
 Adding a case: prefer a photo that would have caught a bug you actually hit. The
 three Tier A dust cases exist because each one caught something — false positives

@@ -74,7 +74,8 @@ def run_case(case, directory, k=6.0):
 
     expect = case["expect"]
 
-    if "persistent_count" in expect or "min_warned" in expect:
+    if any(key in expect for key in
+           ("persistent_count", "min_warned", "max_unwarned_persistent")):
         out = correlate(frames, k=k)
         persistent = out["persistent"]
         if "persistent_count" in expect:
@@ -100,6 +101,12 @@ def run_case(case, directory, k=6.0):
                          "persistent count ceiling",
                          "expected <= {}, got {}".format(expect["max_persistent"],
                                                          len(persistent)))
+        if "max_unwarned_persistent" in expect:
+            unwarned = sum(1 for p in persistent if not p.get("warning"))
+            result.check(unwarned <= expect["max_unwarned_persistent"],
+                         "persistent findings carrying no review warning",
+                         "expected <= {}, got {}".format(
+                             expect["max_unwarned_persistent"], unwarned))
 
     if "min_edge_rejected" in expect or "max_spots" in expect:
         single = detect(frames[0]["image"], k=k)
@@ -113,6 +120,15 @@ def run_case(case, directory, k=6.0):
             result.check(single["count"] <= expect["max_spots"], "single-frame spot ceiling",
                          "expected <= {}, got {}".format(expect["max_spots"],
                                                          single["count"]))
+
+    if "spot_near" in expect:
+        spots = detect(frames[0]["image"], k=k)["spots"]
+        found = [(s["x"], s["y"]) for s in spots]
+        for target in expect["spot_near"]:
+            result.check(_near(found, target, expect.get("tolerance", 0.015)),
+                         "spot found near {}".format(target),
+                         "got {}".format([(round(x, 3), round(y, 3))
+                                          for x, y in found]))
 
     if "no_spot_near" in expect:
         spots = detect(frames[0]["image"], k=k)["spots"]

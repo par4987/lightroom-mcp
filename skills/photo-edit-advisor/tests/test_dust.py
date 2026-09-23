@@ -25,6 +25,7 @@ except ImportError as exc:  # pragma: no cover
 import correlate_dust
 import detect_dust
 import estimate_noise
+import run_evals
 
 
 WIDTH, HEIGHT = 1400, 900
@@ -373,6 +374,87 @@ class NoiseTest(unittest.TestCase):
             self.assertIn("pixels", band)
             if band["noise"] is None:
                 self.assertIn("note", band)
+
+
+class RunCaseTest(unittest.TestCase):
+    """run_evals turns a case dict into pass/fail.
+
+    The two checks added for the re-measured cases -- a positive single-frame
+    detection, and a ceiling on findings that carry no review warning -- had no
+    coverage, and a check nobody tests is a check that silently stops being
+    enforced.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    LENS_CROP = {"lens": "L", "crop": [0.0, 1.0, 0.0, 1.0]}
+
+    def _run(self, case):
+        result = run_evals.run_case(case, self.tmp.name)
+        return result.passed, [label for ok, label, _ in result.checks if not ok]
+
+    def _frame(self, name, blobs, seed=0, ridges=()):
+        synthetic_frame(os.path.join(self.tmp.name, name), blobs,
+                        seed=seed, ridges=ridges)
+
+    def _dark_bar(self, name, fx0, fx1, fy, depth=0.22, w=7):
+        """A horizontal dark bar inside the patch the background check compares.
+
+        It is long and thin on purpose: the Hessian edge test drops it, so it
+        changes the neighbourhood without adding a detection of its own.
+        """
+        path = os.path.join(self.tmp.name, name)
+        image = np.asarray(Image.open(path).convert("L"), dtype=np.float64) / 255.0
+        cy = int(fy * image.shape[0])
+        image[cy - w // 2: cy + w // 2, int(fx0 * image.shape[1]):int(fx1 * image.shape[1])] -= depth
+        Image.fromarray((np.clip(image, 0, 1) * 255).astype(np.uint8)).save(path, quality=98)
+
+    def test_spot_near_passes_when_the_blob_is_there(self):
+        self._frame("blob.jpg", [(0.40, 0.45, 18.0, 0.06)])
+        case = {"frames": [dict(file="blob.jpg")],
+                "expect": {"spot_near": [[0.40, 0.45]], "tolerance": 0.03}}
+        passed, failed = self._run(case)
+        self.assertTrue(passed, failed)
+
+    def test_spot_near_fails_when_the_frame_is_clean(self):
+        self._frame("clean.jpg", [])
+        case = {"frames": [dict(file="clean.jpg")],
+                "expect": {"spot_near": [[0.40, 0.45]], "tolerance": 0.03}}
+        passed, _ = self._run(case)
+        self.assertFalse(passed, "a clean frame must not satisfy spot_near")
+
+    def test_unwarned_ceiling_fails_on_an_unflagged_finding(self):
+        # A blob shared by two genuinely different scenes is persistent and
+        # carries no review warning, so a zero ceiling has to fail here.
+        # The dark bar inside the compared patch makes the neighbourhoods
+        # genuinely different: without it the synthetic gradient correlates
+        # 0.91 and the finding gets flagged.
+        dust = (0.62, 0.40, 18.0, 0.06)
+        self._frame("s1.jpg", [dust], seed=11)
+        self._frame("s2.jpg", [dust], seed=13)
+        self._dark_bar("s1.jpg", 0.58, 0.66, 0.47)
+        self._dark_bar("s2.jpg", 0.58, 0.66, 0.33)
+        case = {"frames": [dict(file="s1.jpg", scene="one", **self.LENS_CROP),
+                           dict(file="s2.jpg", scene="two", **self.LENS_CROP)],
+                "expect": {"max_unwarned_persistent": 0}}
+        passed, failed = self._run(case)
+        self.assertFalse(passed, "the cross-scene finding carries no warning")
+
+    def test_unwarned_ceiling_passes_when_every_finding_is_flagged(self):
+        # One viewpoint tagged as two scenes: the finding persists AND is
+        # flagged, which is the state the re-measured salta-no-dust case relies
+        # on.
+        dust = (0.62, 0.40, 18.0, 0.06)
+        structure = [(0.5, 0.35, 10.0, 0.09), (0.5, 0.46, 9.0, 0.07)]
+        self._frame("v1.jpg", [dust], seed=21, ridges=structure)
+        self._frame("v2.jpg", [dust], seed=22, ridges=structure)
+        case = {"frames": [dict(file="v1.jpg", scene="claimed-one", **self.LENS_CROP),
+                           dict(file="v2.jpg", scene="claimed-two", **self.LENS_CROP)],
+                "expect": {"max_unwarned_persistent": 0, "min_warned": 1}}
+        passed, failed = self._run(case)
+        self.assertTrue(passed, failed)
 
 
 class CliTest(unittest.TestCase):

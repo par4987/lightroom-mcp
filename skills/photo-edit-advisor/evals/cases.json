@@ -10,12 +10,18 @@
     "Every expectation here was measured against Lightroom Classic 15.4 during the",
     "session that built this skill, and the dust positions were cross-checked",
     "against Lightroom's own Dust Removal regions. Where a number is a judgement",
-    "rather than a measurement it is written as a band, not a point."
+    "rather than a measurement it is written as a band, not a point.",
+    "",
+    "The catalogue is live, so expectations are re-measured when the photos drift:",
+    "two Salta frames were re-edited after that first session (Highlights/Shadows",
+    "changed) and their detections moved with them. Each such case records the",
+    "re-measurement date and the reason, so the numbers stay a description of the",
+    "photos rather than of one export."
   ],
   "export": {
     "format": "jpeg",
     "quality": 92,
-    "note": "export_photos does NOT create the destination folder; create it first"
+    "note": "export_photos creates the destination folder when it is missing"
   },
   "cases": [
     {
@@ -28,7 +34,18 @@
         "during the session that produced these numbers, so reproducing this case",
         "means resetting them first -- which also discards the removal.",
         "This case and 'removal-verified' are opposite states of the same photo and",
-        "cannot both be exported from the catalogue at once."
+        "cannot both be exported from the catalogue at once.",
+        "",
+        "As of 2026-09-23 the removal CANNOT be discarded from the SDK: clear_spots",
+        "touches only the classic RetouchInfo store, reset_develop scope=tools",
+        "spot_removal/healing calls resetSpotRemoval/resetHealing and leaves the AI",
+        "patches in place, set_develop_settings rejects EnableDistractionRemoval as",
+        "unknown, create_virtual_copies fails because this SDK has no",
+        "photo:createVirtualCopy, and reset_develop scope=all would also wipe the",
+        "user's masks (personas, radial gradients) that the tool cannot restore.",
+        "Discarding the removal is a manual step in the Lightroom UI. Until it is",
+        "done this case stays blocked and 'arocena-clean-frame-dust' covers the",
+        "detection half of what it checks."
       ],
       "frames": [
         {"photo_id": 742402, "file": "DSC02993.jpg", "scene": "falls",
@@ -44,6 +61,33 @@
         "tolerance": 0.015,
         "attribution_warning": true,
         "_why_warning": "two lenses: the distortion profiles differ, so positions are not comparable"
+      }
+    },
+    {
+      "id": "arocena-clean-frame-dust",
+      "tier": "A",
+      "what_it_checks": "the detector finds the session's real sensor dirt in a clean, un-removed frame",
+      "requires": [
+        "The counterpart to 'arocena-dust-present': that case needs three frames",
+        "with Dust Removal discarded, which cannot be done from the SDK. This one",
+        "uses a clean frame that still shows the dirt, so it exports from the",
+        "catalogue as it stands."
+      ],
+      "frames": [
+        {"photo_id": 742400, "file": "DSC02991.jpg", "scene": "falls",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]}
+      ],
+      "expect": {
+        "spot_near": [[0.575, 0.058], [0.290, 0.030]],
+        "tolerance": 0.015,
+        "max_spots": 12,
+        "_why": "two of the three known specks land inside this frame's smooth sky and are",
+        "_why2": "detected at the expected sensor positions: (0.575, 0.127) and (0.290, 0.103),",
+        "_why3": "measured against the positions 'arocena-dust-present' cross-checked against",
+        "_why4": "Lightroom's own Dust Removal regions. The third speck is not observable here:",
+        "_why5": "this frame's sky has no smooth bright patch at that position.",
+        "_frame": "spot_near targets are EXPORT coordinates, not sensor coordinates",
+        "_measured": "2026-09-23"
       }
     },
     {
@@ -63,8 +107,14 @@
          "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]}
       ],
       "expect": {
-        "persistent_count": 0,
-        "_why": "cloudy skies full of structure: dust is not observable, which is not the same as absent"
+        "max_unwarned_persistent": 0,
+        "max_persistent": 1,
+        "_why": "cloudy skies full of structure: dust is not observable, which is not the same as absent",
+        "_remeasured": "2026-09-23 -- persistent_count 0 no longer holds. The frames were re-edited",
+        "_why_remeasure": "DSC09299 and DSC09460 now produce one recurrence at (0.136, 0.243) scoring 15.2.",
+        "_why_remeasure2": "The background check scores it 0.56 and flags it for review, which is the defence",
+        "_why_remeasure3": "the design actually offers, so the case asserts that defence instead: nothing is",
+        "_why_remeasure4": "reported as dust without a warning attached."
       }
     },
     {
@@ -82,10 +132,13 @@
          "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]}
       ],
       "expect": {
-        "min_warned": 3,
+        "min_warned": 2,
         "max_persistent": 4,
         "_why": "the two tags are one viewpoint; the skyline and cloud band repeat and score 0.67-0.80",
-        "_why_max": "without the Hessian edge test this returns 5, the fifth being the sun"
+        "_why_max": "without the Hessian edge test this returns 5, the fifth being the sun",
+        "_remeasured": "2026-09-23 -- min_warned 3 -> 2. The third recurrence now scores -0.14",
+        "_why_remeasure": "between the frames (early vs golden), so the background check stays silent on it.",
+        "_why_remeasure2": "The two flagged ones still score 0.66 and 0.69, inside the documented band."
       }
     },
     {
