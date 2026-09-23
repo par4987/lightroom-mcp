@@ -5,9 +5,9 @@ return {
     LrToolkitIdentifier = 'com.lightroom.mcp',
     LrPluginName = "Lightroom MCP AI",
 
-    LrPluginInfoUrl = "https://github.com/pired/lightroom-mcp",
+    LrPluginInfoUrl = "https://github.com/par4987/lightroom-mcp",
 
-    VERSION = { major=3, minor=2, revision=0, build=0 },
+    VERSION = { major=3, minor=2, revision=1, build=0 },
 
     LrPluginInfoProvider = 'PluginInfoProvider.lua',
     LrInitPlugin = 'PluginInit.lua',
