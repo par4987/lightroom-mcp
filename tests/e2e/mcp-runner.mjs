@@ -19,7 +19,7 @@
 //
 // Exit code is non-zero if any scenario fails.
 
-import { spawn, execFileSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
@@ -146,7 +146,15 @@ class McpClient {
   }
 
   async callTool(name, toolArgs) {
-    const result = await this._rpc("tools/call", { name, arguments: toolArgs ?? {} });
+    // Outwait the server dispatcher's longest per-action timeout (120s in
+    // ACTION_TIMEOUTS_MS, src/index.ts): the dispatcher's error says which
+    // action stalled and what to do about it -- if the client gives up first
+    // all we get is a bare "rpc timeout" while the plugin is still working.
+    const result = await this._rpc(
+      "tools/call",
+      { name, arguments: toolArgs ?? {} },
+      130_000,
+    );
     const text = result?.content?.[0]?.text ?? "";
     let parsed;
     try {
@@ -178,6 +186,55 @@ function checkEq(label, got, want) {
 }
 function checkTrue(label, cond, ctx) {
   if (!cond) throw new Error(`${label}: ${ctx ?? "expected truthy"}`);
+}
+
+// The export suite used `find` and `sips` here; both are macOS-only (on
+// Windows `find` is the interactive FIND.exe and rejects -type). Pure JS so
+// the harness runs wherever the server does.
+function listFilesRecursive(dir) {
+  const out = [];
+  const walk = (current) => {
+    let entries;
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const entry of entries) {
+      const full = path.join(current, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else out.push(full);
+    }
+  };
+  walk(dir);
+  return out;
+}
+
+// JPEG SOF / PNG IHDR: enough to assert the export size constraint held.
+function imageDimensions(file) {
+  const buf = fs.readFileSync(file);
+  if (buf.length > 24 && buf[0] === 0x89 && buf.toString("ascii", 1, 4) === "PNG") {
+    return { w: buf.readUInt32BE(16), h: buf.readUInt32BE(20) };
+  }
+  if (buf.length > 4 && buf[0] === 0xff && buf[1] === 0xd8) {
+    let i = 2;
+    while (i + 9 < buf.length) {
+      if (buf[i] !== 0xff) { i += 1; continue; }
+      const marker = buf[i + 1];
+      if (marker === 0xff) { i += 1; continue; }
+      if (marker === 0x01 || (marker >= 0xd0 && marker <= 0xd7) || marker === 0xd8) {
+        i += 2;
+        continue;
+      }
+      const isSOF =
+        marker >= 0xc0 && marker <= 0xcf && marker !== 0xc4 && marker !== 0xc8 && marker !== 0xcc;
+      if (isSOF) {
+        return { h: buf.readUInt16BE(i + 5), w: buf.readUInt16BE(i + 7) };
+      }
+      i += 2 + buf.readUInt16BE(i + 2);
+    }
+  }
+  return null;
 }
 
 function exactPresetSelector(preset, presets) {
@@ -267,7 +324,16 @@ async function main() {
 
   if (mode === "tool") {
     const toolName = args[1];
-    const toolArgs = args[2] ? JSON.parse(args[2]) : {};
+    // PowerShell 5.1 mangles JSON argv containing spaces (it splits the value
+    // at the first space before node ever sees it). Accept `@path` to read the
+    // params from a file instead -- works from any shell.
+    const toolArgs = args[2]
+      ? JSON.parse(
+          args[2].startsWith("@")
+            ? fs.readFileSync(args[2].slice(1), "utf8")
+            : args[2],
+        )
+      : {};
     if (!toolName) {
       console.error("usage: mcp-runner.mjs tool <name> '<json>'");
       process.exit(2);
@@ -366,9 +432,19 @@ async function main() {
   }
 
   if (mode === "read" || mode === "all") {
-    await run("tools/list returns 18 tools", async () => {
+    await run("tools/list matches tool-contracts.ts", async () => {
+      // Hard-coding the count here went stale the moment tools were added
+      // (it said 18 while the server exposed 56). Count the contracts instead:
+      // that file is the source of truth for what tools/list must return.
+      const contracts = fs.readFileSync(
+        path.join(REPO_ROOT, "server", "src", "tool-contracts.ts"),
+        "utf8",
+      );
+      const expected = (contracts.match(/luaHandler:\s*"/g) ?? []).length;
+      checkTrue("contract tools > 0", expected > 0, `parsed ${expected}`);
       const tools = await c.listTools();
-      checkEq("tool count", tools.tools.length, 18);
+      checkEq("tool count", tools.tools.length, expected);
+      return `${expected} tools`;
     });
 
     await run("list_collections smoke", async () => {
@@ -638,8 +714,10 @@ async function main() {
     }
     const photo = search.parsed.photos?.[0];
     if (photo) {
+      // Deliberately NOT created here: Lightroom does not create the
+      // destination folder, the plugin has to (created_directory). Exporting
+      // into a missing folder used to fail with a message in the UI language.
       const dest = path.join(os.tmpdir(), `lr_export_e2e_${Date.now()}`);
-      fs.mkdirSync(dest, { recursive: true });
       await run(`export_photos JPEG @1024 → ${dest}`, async () => {
         const r = await c.callTool("export_photos", {
           photo_ids: [String(photo.id)],
@@ -651,19 +729,20 @@ async function main() {
         });
         checkTrue("not error", !r.isError, r.text);
         checkEq("exported count", r.parsed.exported, 1);
+        checkEq("destination folder was created", r.parsed.created_directory, true);
         // Search recursively in case LR put it in a subfolder, AND search
         // the photo's source folder (in case destinationType was ignored).
-        const allInDest = execFileSync("find", [dest, "-type", "f"], { encoding: "utf8" }).trim();
-        const jpegs = allInDest.split("\n").filter((p) => /\.(jpe?g)$/i.test(p));
+        const allInDest = listFilesRecursive(dest);
+        const jpegs = allInDest.filter((p) => /\.(jpe?g)$/i.test(p));
         checkTrue("at least one jpeg", jpegs.length >= 1,
-          `dest tree: [${allInDest}], srcDir: ${path.dirname(photo.path)}`);
+          `dest tree: [${allInDest.join(", ")}], srcDir: ${path.dirname(photo.path)}`);
         const out = jpegs[0];
-        const sips = execFileSync("sips", ["-g", "pixelWidth", "-g", "pixelHeight", out], {
-          encoding: "utf8",
-        });
-        const w = Number((sips.match(/pixelWidth: (\d+)/) ?? [])[1]);
-        const h = Number((sips.match(/pixelHeight: (\d+)/) ?? [])[1]);
-        checkTrue("long edge ≤ 1024", Math.max(w, h) <= 1024, `got ${w}x${h}`);
+        // Was `sips`, which only exists on macOS; the harness has to run on
+        // the Windows-first dev machine too.
+        const dims = imageDimensions(out);
+        checkTrue("readable dimensions", !!dims, `could not parse ${out}`);
+        checkTrue("long edge ≤ 1024", Math.max(dims.w, dims.h) <= 1024,
+          `got ${dims.w}x${dims.h}`);
       });
       // Keep dest around for inspection if test failed
       if (failures.find((f) => f.label.startsWith("export_photos"))) {

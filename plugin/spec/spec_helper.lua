@@ -203,6 +203,19 @@ function M.fakePhoto(meta)
         end,
         applyDevelopSettings = function(_, settings)
             meta.__appliedSettings = settings
+            -- Mirror Lightroom: what was accepted lands in the stored settings.
+            -- Without this every read-back verification (set_color_label,
+            -- apply_auto, set_develop_settings) reads a table this mock never
+            -- heard its own write through, so the verification is untestable
+            -- rather than merely untested.
+            local stored = meta.developSettings
+            if type(stored) ~= "table" then
+                stored = {}
+                meta.developSettings = stored
+            end
+            for k, v in pairs(settings) do
+                stored[k] = v
+            end
         end,
         createVirtualCopy = function(_)
             local copy = M.fakePhoto({

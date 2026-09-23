@@ -4,10 +4,25 @@ local function setup(opts)
     opts = opts or {}
     local exportSessionCalls = {}
     local catalog = helper.fakeCatalog({ photos = opts.photos or {} })
+    -- In-memory destination tree (path -> "directory"). Lightroom does NOT
+    -- create the destination folder, so the handler has to -- which means the
+    -- specs need a filesystem where the folder starts missing.
+    local fs = opts.fs or {}
+    local mkdirCalls = {}
+    -- Real SDK name/contract: LrFileUtils.createAllDirectories (SDK 1.3+)
+    -- returns (made, detail); it does not raise.
+    local fileUtils = opts.fileUtils or {
+        exists = function(p) return fs[p] end,
+        createAllDirectories = function(p)
+            table.insert(mkdirCalls, p)
+            fs[p] = "directory"
+            return true
+        end,
+    }
     helper.installImport({
         LrApplication = { activeCatalog = function() return catalog end },
         LrLogger = helper.defaultLrLogger(),
-        LrFileUtils = {},
+        LrFileUtils = fileUtils,
         LrPathUtils = {},
         LrExportSession = function(args)
             table.insert(exportSessionCalls, args)
@@ -17,7 +32,7 @@ local function setup(opts)
         end,
     })
     package.loaded.HandlerExport = nil
-    return catalog, require 'HandlerExport', exportSessionCalls
+    return catalog, require 'HandlerExport', exportSessionCalls, mkdirCalls
 end
 
 describe("HandlerExport.exportPhotos", function()
@@ -117,7 +132,7 @@ describe("HandlerExport.exportPhotos", function()
         helper.installImport({
             LrApplication = { activeCatalog = function() return catalog end },
             LrLogger = helper.defaultLrLogger(),
-            LrFileUtils = {},
+            LrFileUtils = { exists = function() return "directory" end },
             LrPathUtils = {},
             LrExportSession = function()
                 return {
@@ -135,5 +150,49 @@ describe("HandlerExport.exportPhotos", function()
         assert.is_true(r.success)
         assert.are.equal(1, r.exported)
         assert.is_false(exportRanInsideReadAccess)
+    end)
+
+    it("creates the destination folder when it does not exist", function()
+        -- Exporting into a missing folder fails with a Lightroom message in
+        -- the UI's language; the handler creates it instead.
+        local p = helper.fakePhoto({ id = "1", path = "/a.jpg" })
+        local _, Handler, calls, mkdirs = setup({ photos = { p } })
+
+        local r = Handler.exportPhotos({ photo_ids = { "1" }, destination = "/tmp/new-dir" })
+
+        assert.are.same({ "/tmp/new-dir" }, mkdirs)
+        assert.is_true(r.created_directory)
+        assert.is_true(r.success)
+        assert.are.equal(1, #calls)
+        assert.is_not_nil(r.message:find("destination folder created", 1, true))
+    end)
+
+    it("leaves an existing destination folder alone", function()
+        local p = helper.fakePhoto({ id = "1", path = "/a.jpg" })
+        local _, Handler, _, mkdirs = setup({
+            photos = { p },
+            fs = { ["/out"] = "directory" },
+        })
+
+        local r = Handler.exportPhotos({ photo_ids = { "1" }, destination = "/out" })
+
+        assert.are.same({}, mkdirs)
+        assert.is_false(r.created_directory)
+        assert.is_nil(r.message:find("destination folder created", 1, true))
+    end)
+
+    it("fails with the path when the folder cannot be created", function()
+        local p = helper.fakePhoto({ id = "1", path = "/a.jpg" })
+        local _, Handler = setup({
+            photos = { p },
+            fileUtils = {
+                exists = function() return nil end,
+                createAllDirectories = function() return nil end,
+            },
+        })
+
+        assert.has_error(function()
+            Handler.exportPhotos({ photo_ids = { "1" }, destination = "/nope" })
+        end, "Destination folder does not exist and could not be created: /nope")
     end)
 end)

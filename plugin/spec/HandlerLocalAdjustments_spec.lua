@@ -575,8 +575,11 @@ describe("HandlerLocalAdjustments.addLocalAdjustment", function()
     end)
 
     it("reports when the write was not accepted", function()
-        -- Applies that never land: read-back sees no new correction.
+        -- Lightroom discarding the apply outright: the read-back finds no new
+        -- correction. fakePhoto persists applies by default (read-back
+        -- verification depends on it), so the discard has to be explicit here.
         local p1 = helper.fakePhoto({ id = "1", path = "/a.jpg" })
+        p1.applyDevelopSettings = function() end
         local _, Handler = setup({ photos = { p1 } })
 
         local r = Handler.addLocalAdjustment({

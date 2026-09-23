@@ -97,6 +97,14 @@ const ACTION_TIMEOUTS_MS: Record<string, number> = {
   reset_develop: 120_000,
   set_process_version: 120_000,
   add_range_mask: 120_000,
+  // Develop writes queue behind the catalog write gate plus the render the
+  // change kicks off: measured 17-36s per call on a healthy plugin (LrC log:
+  // the request line and the "Set develop settings"/"Copied develop settings"
+  // completion line span 30s+), so the 30s default timed out every
+  // set/copy while the work completed moments later.
+  set_develop_settings: 120_000,
+  copy_develop_settings: 120_000,
+  apply_develop_preset: 120_000,
   toggle_mask_overlay: 60_000,
   // Batch metadata writes up to 1000 photos through one write gate plus a
   // full read-back verification pass.

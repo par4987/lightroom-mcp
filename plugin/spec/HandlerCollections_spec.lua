@@ -209,4 +209,42 @@ describe("HandlerCollections.getCollectionPhotos", function()
             Handler.getCollectionPhotos({})
         end, "collection_name is required")
     end)
+
+    it("accepts the prefixed path list_collections displays", function()
+        -- listCollections shows "Clientes / Seleccionadas"; the lookup used to
+        -- compare bare getName() only, so the name the caller had just read
+        -- from list_collections failed with "Collection not found".
+        local p1 = helper.fakePhoto({ id = "9", path = "/x.jpg", fileName = "x.jpg" })
+        local nested = helper.fakeCollection("Seleccionadas", { p1 })
+        local _, Handler = setup({
+            collectionSets = { helper.fakeCollectionSet("Clientes", { nested }) },
+        })
+
+        local listed = Handler.listCollections({})
+        assert.are.equal("Clientes / Seleccionadas", listed.collections[1].name)
+
+        local r = Handler.getCollectionPhotos({
+            collection_name = "Clientes / Seleccionadas",
+        })
+
+        assert.is_true(r.success)
+        assert.are.equal(1, r.count)
+    end)
+
+    it("refuses to guess when a bare name matches in two sets", function()
+        local _, Handler = setup({
+            collectionSets = {
+                helper.fakeCollectionSet("Norte", { helper.fakeCollection("Viajes", {}) }),
+                helper.fakeCollectionSet("Sur", { helper.fakeCollection("Viajes", {}) }),
+            },
+        })
+
+        assert.has_error(function()
+            Handler.getCollectionPhotos({ collection_name = "Viajes" })
+        end, "Collection name is ambiguous: 'Viajes' matches Norte / Viajes, "
+            .. "Sur / Viajes. Use the full path as shown by list_collections.")
+
+        local r = Handler.getCollectionPhotos({ collection_name = "Sur / Viajes" })
+        assert.is_true(r.success)
+    end)
 end)

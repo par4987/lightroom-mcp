@@ -36,6 +36,28 @@ function ExportHandler.exportPhotos(args)
         error("destination is required")
     end
 
+    -- Lightroom does not create the destination folder: exporting into a path
+    -- that does not exist fails with a message in the UI's language, which
+    -- cost the skill a round trip every time it exported to its own temp dir.
+    -- Create it here and fail with a path we control when we cannot.
+    local createdDirectory = false
+    if LrFileUtils.exists(args.destination) ~= "directory" then
+        -- The SDK function is createAllDirectories (SDK 1.3+). The
+        -- mkdirAllDirectories name does not exist and fails at runtime with
+        -- "attempt to call a nil value" (measured on LrC 15.x). It reports
+        -- failures through its return values (made, detail) rather than by
+        -- raising, so keep the pcall for a nil/throwing implementation AND
+        -- read them back; exists() is the ground truth either way.
+        local ok, made, detail = pcall(LrFileUtils.createAllDirectories, args.destination)
+        if ok and made and LrFileUtils.exists(args.destination) == "directory" then
+            createdDirectory = true
+        else
+            error("Destination folder does not exist and could not be created: "
+                .. tostring(args.destination)
+                .. (ok and "" or (" (" .. tostring(detail or made) .. ")")))
+        end
+    end
+
     local catalog = LrApplication.activeCatalog()
 
     -- Resolve photos under read access, then RELEASE the lock before
@@ -136,8 +158,12 @@ function ExportHandler.exportPhotos(args)
         success = true,
         exported = exportedCount,
         destination = args.destination,
+        created_directory = createdDirectory,
         message = string.format("Exported %d photos to %s", exportedCount, args.destination)
     }
+    if createdDirectory then
+        result.message = result.message .. " (destination folder created)"
+    end
     if args.watermark then
         result.watermark = args.watermark
         result.message = result.message .. string.format(" with watermark '%s'", args.watermark)

@@ -83,7 +83,9 @@ node tests/e2e/mcp-runner.mjs read
 
 **What it covers**
 
-- `tools/list` returns 18 tools (matches `server/src/tool-contracts.ts`)
+- `tools/list` returns one tool per `luaHandler` entry in
+  `server/src/tool-contracts.ts` (the harness counts the contracts rather than
+  hard-coding a number; a fixed count went stale at 18 while 56 shipped).
 - `list_collections` — paginated, count + array shape
 - `get_selected_photos` — paginated, array shape (works whether something is selected or not; falls back to filmstrip)
 - `search_photos` no-filter — returns first N photos

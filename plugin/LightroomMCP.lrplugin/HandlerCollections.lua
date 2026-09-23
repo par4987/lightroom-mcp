@@ -6,6 +6,57 @@ local Log = require 'Log'
 
 local CollectionsHandler = {}
 
+-- Every by-name lookup in this file used to compare against collection:getName()
+-- alone, while listCollections DISPLAYS nested collections with their set path
+-- prefixed ("Viajes / Catamarca"). The name an agent had just copied from
+-- list_collections therefore failed with "Collection not found". Resolve what
+-- list shows: the full path first (it disambiguates duplicates), then the bare
+-- name, and refuse to guess when a bare name is ambiguous.
+--
+-- Must run inside a catalog access block: getName/getChildCollections need it.
+local function findCollection(catalog, wanted)
+    local entries = {}
+    local function add(coll, path)
+        table.insert(entries, { path = path, bare = coll:getName(), collection = coll })
+    end
+
+    for _, coll in ipairs(catalog:getChildCollections()) do
+        add(coll, coll:getName())
+    end
+
+    local function walk(set, prefix)
+        for _, coll in ipairs(set:getChildCollections()) do
+            add(coll, prefix .. coll:getName())
+        end
+        for _, child in ipairs(set:getChildCollectionSets()) do
+            walk(child, prefix .. child:getName() .. " / ")
+        end
+    end
+
+    for _, set in ipairs(catalog:getChildCollectionSets()) do
+        walk(set, set:getName() .. " / ")
+    end
+
+    for _, entry in ipairs(entries) do
+        if entry.path == wanted then return entry.collection end
+    end
+
+    local ambiguous = {}
+    for _, entry in ipairs(entries) do
+        if entry.bare == wanted then table.insert(ambiguous, entry) end
+    end
+    if #ambiguous == 1 then return ambiguous[1].collection end
+    if #ambiguous > 1 then
+        local paths = {}
+        for _, entry in ipairs(ambiguous) do table.insert(paths, entry.path) end
+        error("Collection name is ambiguous: '" .. wanted .. "' matches "
+            .. table.concat(paths, ", ")
+            .. ". Use the full path as shown by list_collections.")
+    end
+
+    return nil
+end
+
 function CollectionsHandler.listCollections(args)
     args = args or {}
     local catalog = LrApplication.activeCatalog()
@@ -104,46 +155,8 @@ function CollectionsHandler.addToCollection(args)
     local missingCount = 0
 
     catalog:withWriteAccessDo("Add Photos to Collection", function()
-        -- Find the collection
-        local targetCollection = nil
-        local collections = catalog:getChildCollections()
-
-        for _, collection in ipairs(collections) do
-            if collection:getName() == args.collection_name then
-                targetCollection = collection
-                break
-            end
-        end
-
-        -- Also search in collection sets
-        if not targetCollection then
-            local collectionSets = catalog:getChildCollectionSets()
-            local function findInSet(collSet)
-                local setCollections = collSet:getChildCollections()
-                for _, coll in ipairs(setCollections) do
-                    if coll:getName() == args.collection_name then
-                        return coll
-                    end
-                end
-
-                local childSets = collSet:getChildCollectionSets()
-                for _, childSet in ipairs(childSets) do
-                    local found = findInSet(childSet)
-                    if found then
-                        return found
-                    end
-                end
-
-                return nil
-            end
-
-            for _, set in ipairs(collectionSets) do
-                targetCollection = findInSet(set)
-                if targetCollection then
-                    break
-                end
-            end
-        end
+        -- Find the collection, by the name list_collections displays.
+        local targetCollection = findCollection(catalog, args.collection_name)
 
         if not targetCollection then
             error("Collection not found: " .. args.collection_name)
@@ -262,36 +275,11 @@ function CollectionsHandler.getCollectionPhotos(args)
 
     local catalog = LrApplication.activeCatalog()
 
-    -- Find the collection by name, top level first, then inside sets
-    -- (recursive, same walk as addToCollection).
+    -- Find the collection by the name list_collections displays (path or bare),
+    -- inside read access: getName/getChildCollections need it.
     local targetCollection = nil
     catalog:withReadAccessDo(function()
-        for _, collection in ipairs(catalog:getChildCollections()) do
-            if collection:getName() == args.collection_name then
-                targetCollection = collection
-                break
-            end
-        end
-
-        if not targetCollection then
-            local function findInSet(collSet)
-                for _, coll in ipairs(collSet:getChildCollections()) do
-                    if coll:getName() == args.collection_name then
-                        return coll
-                    end
-                end
-                for _, childSet in ipairs(collSet:getChildCollectionSets()) do
-                    local found = findInSet(childSet)
-                    if found then return found end
-                end
-                return nil
-            end
-
-            for _, set in ipairs(catalog:getChildCollectionSets()) do
-                targetCollection = findInSet(set)
-                if targetCollection then break end
-            end
-        end
+        targetCollection = findCollection(catalog, args.collection_name)
     end)
 
     if not targetCollection then

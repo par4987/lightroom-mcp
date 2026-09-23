@@ -3,6 +3,19 @@ import { PluginLiveness, SHADOW_BRIDGE_MESSAGE } from '../src/plugin-liveness.js
 import { probePlugin, type HeartbeatDispatcher } from '../src/heartbeat.js';
 import { createCallToolHandler } from '../src/tool-handler.js';
 
+describe('SHADOW_BRIDGE_MESSAGE', () => {
+  it('gives a stale-bridge command this platform can actually run', () => {
+    if (process.platform === 'win32') {
+      // The old message said `pgrep`, which does not exist on Windows -- the
+      // project is Windows-first, so the hint has to be a recipe that runs.
+      expect(SHADOW_BRIDGE_MESSAGE).toContain('Get-CimInstance Win32_Process');
+      expect(SHADOW_BRIDGE_MESSAGE).not.toContain('pgrep');
+    } else {
+      expect(SHADOW_BRIDGE_MESSAGE).toContain('pgrep -fl lightroom-mcp');
+    }
+  });
+});
+
 describe('PluginLiveness', () => {
   it('treats a connection with no settled ping as usable', () => {
     const liveness = new PluginLiveness();

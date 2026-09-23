@@ -648,7 +648,8 @@ export const TOOL_CONTRACTS: ToolContract[] = [
   {
     name: "export_photos",
     luaHandler: "HandlerExport.exportPhotos",
-    description: "Export photos from Lightroom",
+    description:
+      "Export photos from Lightroom. Creates the destination folder when it does not exist (the response reports created_directory: true); fails with the path when it cannot.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -821,7 +822,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "set_develop_settings",
     luaHandler: "HandlerDevelop.setDevelopSettings",
     description:
-      "Set Develop settings directly on a photo. Keys use allowlisted Lightroom SDK names (Exposure2012, WhiteBalance, Contrast2012, Highlights2012, Shadows2012, Whites2012, Blacks2012, Clarity2012, Vibrance, Saturation, HueAdjustmentRed, SaturationAdjustmentOrange, LuminanceAdjustmentYellow, etc.), plus RGB composite and per-channel point curves via ToneCurvePV2012, ToneCurvePV2012Red, ToneCurvePV2012Green, and ToneCurvePV2012Blue.",
+      "Set Develop settings directly on a photo. Keys use allowlisted Lightroom SDK names (Exposure2012, WhiteBalance, Contrast2012, Highlights2012, Shadows2012, Whites2012, Blacks2012, Clarity2012, Vibrance, Saturation, HueAdjustmentRed, SaturationAdjustmentOrange, LuminanceAdjustmentYellow, etc.), plus RGB composite and per-channel point curves via ToneCurvePV2012, ToneCurvePV2012Red, ToneCurvePV2012Green, and ToneCurvePV2012Blue. Reads the settings back: the response carries `verified` (what Lightroom stored) and, when a key was refused, `not_applied` plus a warning -- so a follow-up verification call is unnecessary.",
     inputSchema: {
       type: "object",
       additionalProperties: false,

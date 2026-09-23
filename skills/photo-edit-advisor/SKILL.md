@@ -17,6 +17,15 @@ need full-resolution pixels; both are wrong if done by eye on a downscaled JPEG.
 Default to `propose`: report findings and the edit you would make, and let the
 person say yes. Apply directly only when they have asked for that.
 
+**`mode` is a hard gate, not a description of intent.** Without an explicit
+`auto` in the user's own message (or a yes to a proposal you already made), you
+are in `propose` mode and MUST NOT call any catalog-mutating tool --
+`set_develop_settings`, `set_white_balance`, `apply_auto`, `set_color_label`,
+`set_flags`, `add_*`, `remove_*`, `set_mask_*`, `delete_collection`,
+`add_to_collection`, `create_*`, `delete_photo`, `rotate_photo`, `apply_preset`,
+`ai_denoise`, `distraction_removal`. Reading, exporting and proposing are
+always allowed. If the user then says yes, switch to `auto` for that edit.
+
 ## Before anything
 
 The scripts need `numpy` and `pillow` (`pip install -r requirements.txt`). They
@@ -24,8 +33,9 @@ deliberately do NOT need scipy.
 
 Three things about the MCP server that will otherwise cost a round trip each:
 
-- `export_photos` does **not create the destination folder**. Create it first, or
-  Lightroom fails with a message in the UI's language.
+- `export_photos` creates the destination folder when it is missing (and says
+  so via `created_directory`). It still fails when the path cannot be created,
+  with a message naming the path.
 - `get_develop_settings` takes `fields: "basic" | "all"` — not `"full"`, and the
   error does not say so. Reading `FilterList` needs `fields: "all"` **and**
   `max_depth: 16`.

@@ -16,11 +16,20 @@
  */
 export type PluginLivenessState = "unknown" | "responsive" | "unresponsive";
 
+// This project is Windows-first: pgrep does not exist there, so the old hint
+// sent people to a command they could not run while diagnosing a real stall.
+const staleBridgeHint =
+  process.platform === "win32"
+    ? "Get-CimInstance Win32_Process -Filter \"Name='node.exe'\" | " +
+      "Where-Object { $_.CommandLine -match 'lightroom-mcp' } | " +
+      "ForEach-Object { Stop-Process -Id $_.ProcessId -Force }"
+    : "pgrep -fl lightroom-mcp";
+
 export const SHADOW_BRIDGE_MESSAGE =
   "Connected to the Lightroom plugin's ports, but it is not answering. " +
   "The plugin serves one client at a time, so another lightroom-mcp process " +
   "is most likely holding the connection. Quit any other MCP client or stale " +
-  "bridge process (pgrep -fl lightroom-mcp), or restart the plugin from " +
+  `bridge process (run: ${staleBridgeHint}), or restart the plugin from ` +
   "Lightroom's Plug-in Manager.";
 
 export class PluginLiveness {

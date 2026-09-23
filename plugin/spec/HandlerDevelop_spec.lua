@@ -757,6 +757,71 @@ describe("HandlerDevelop.setDevelopSettings", function()
             assert.is_nil(p.getRawMetadata(p, "__appliedSettings"))
         end
     end)
+
+    it("reads the settings back and reports what Lightroom stored", function()
+        -- The only writer in the server that used to return success on the
+        -- strength of the write call alone; everything else verifies.
+        local p = helper.fakePhoto({ id = "1", path = "/a.jpg" })
+        local _, Handler = setup({ photos = { p } })
+
+        local r = Handler.setDevelopSettings({
+            photo_id = "1",
+            settings = { Exposure2012 = 0.75, Contrast2012 = 15 },
+        })
+
+        assert.is_true(r.success)
+        assert.are.same({ Exposure2012 = 0.75, Contrast2012 = 15 }, r.verified)
+        assert.is_nil(r.not_applied)
+        assert.is_nil(r.warning)
+        -- the read-back must come from the photo's stored settings, not from
+        -- the arguments it was handed
+        assert.are.same(r.verified, p.getDevelopSettings(p))
+    end)
+
+    it("names the keys Lightroom refused to store", function()
+        local p = helper.fakePhoto({ id = "1", path = "/a.jpg" })
+        -- Model Lightroom dropping a key it will not store for this photo.
+        local accept = p.applyDevelopSettings
+        p.applyDevelopSettings = function(self, settings)
+            local stored = {}
+            for k, v in pairs(settings) do
+                if k ~= "Contrast2012" then stored[k] = v end
+            end
+            accept(self, stored)
+        end
+        local _, Handler = setup({ photos = { p } })
+
+        local r = Handler.setDevelopSettings({
+            photo_id = "1",
+            settings = { Exposure2012 = 0.5, Contrast2012 = 40 },
+        })
+
+        assert.is_true(r.success)
+        assert.are.same({ "Contrast2012" }, r.not_applied)
+        assert.is_nil(r.verified.Contrast2012)
+        assert.are.equal(0.5, r.verified.Exposure2012)
+        assert.is_not_nil(r.warning:find("Contrast2012", 1, true))
+    end)
+
+    it("does not fail a stored float that Lightroom normalised", function()
+        local p = helper.fakePhoto({ id = "1", path = "/a.jpg" })
+        local accept = p.applyDevelopSettings
+        p.applyDevelopSettings = function(self, settings)
+            local stored = {}
+            for k, v in pairs(settings) do stored[k] = v end
+            stored.Exposure2012 = 0.7500001
+            accept(self, stored)
+        end
+        local _, Handler = setup({ photos = { p } })
+
+        local r = Handler.setDevelopSettings({
+            photo_id = "1",
+            settings = { Exposure2012 = 0.75 },
+        })
+
+        assert.is_nil(r.not_applied)
+        assert.is_nil(r.warning)
+    end)
 end)
 
 describe("HandlerDevelop.setWhiteBalance", function()

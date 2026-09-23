@@ -819,6 +819,24 @@ function DevelopHandler.copyDevelopSettings(args)
     }
 end
 
+-- Lightroom does not necessarily store what it was handed: a key can be dropped
+-- for this photo's format or process version, and floats come back normalised.
+-- Compare with a relative tolerance so 0.75 does not fail as 0.74999.
+local function sameValue(a, b)
+    if type(a) == "number" and type(b) == "number" then
+        return math.abs(a - b) <= 1e-4 * math.max(1, math.abs(b))
+    end
+    if type(a) ~= type(b) then return false end
+    if type(a) ~= "table" then return a == b end
+    for k, v in pairs(a) do
+        if not sameValue(v, b[k]) then return false end
+    end
+    for k in pairs(b) do
+        if a[k] == nil then return false end
+    end
+    return true
+end
+
 function DevelopHandler.setDevelopSettings(args)
     args.photo_id = requirePhotoId(args.photo_id, "photo_id")
     requireDevelopSettingsObject(args.settings)
@@ -835,12 +853,47 @@ function DevelopHandler.setDevelopSettings(args)
         applied = true
     end)
 
-    Log.info(string.format("Set develop settings on photo %s", args.photo_id))
+    -- Read back the keys that were asked for. This was the only writer in the
+    -- server that returned success on the strength of the write call alone
+    -- (set_color_label, set_flags, apply_auto and setWhiteBalance all verify),
+    -- so an agent told to verify had to spend an extra round trip -- and could
+    -- not tell a rejected key from an applied one.
+    local verified, rejected = nil, {}
+    if applied then
+        catalog:withReadAccessDo(function()
+            local photo = PhotoLookup.resolveOne(catalog, args.photo_id)
+            if not photo then return end
+            local current = photo:getDevelopSettings() or {}
+            verified = {}
+            for key, wanted in pairs(args.settings) do
+                verified[key] = current[key]
+                if not sameValue(current[key], wanted) then
+                    table.insert(rejected, key)
+                end
+            end
+        end)
+    end
 
-    return {
+    -- # does not work on verified: its keys are setting names, not an array.
+    local asked = 0
+    for _ in pairs(args.settings) do asked = asked + 1 end
+    Log.info(string.format("Set develop settings on photo %s (%d key(s) asked, %d not stored)",
+        args.photo_id, applied and asked or 0, #rejected))
+
+    local result = {
         success = applied,
         photo_id = args.photo_id,
     }
+    if verified then
+        result.verified = verified
+        if #rejected > 0 then
+            result.not_applied = rejected
+            result.warning = "Lightroom did not store these setting(s): "
+                .. table.concat(rejected, ", ")
+                .. ". See `verified` for what is actually on the photo."
+        end
+    end
+    return result
 end
 
 -- White balance presets accepted by the WhiteBalance develop setting. "Auto"

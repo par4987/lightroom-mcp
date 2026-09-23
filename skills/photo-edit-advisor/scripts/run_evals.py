@@ -11,7 +11,8 @@ not graded here. The cases are listed so they are not forgotten, and
 
 This cannot run in CI: the photos live on the photographer's disk and are
 re-exported per run. Export the files named in cases.json to one directory
-(export_photos does NOT create it, so make it first) and point this at it.
+(the server creates it when missing, as long as the path itself is writable)
+and point this at it.
 
     python scripts/run_evals.py /tmp/evalexports
 """

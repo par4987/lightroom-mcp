@@ -1,8 +1,9 @@
 local helper = require 'spec_helper'
 
--- fakePhoto captures applyDevelopSettings calls but never reflects them in
--- getDevelopSettings. The spots handlers verify their writes by reading the
--- settings back, so the specs need a photo whose applies are observable.
+-- fakePhoto persists applies into developSettings now. This wrapper adds a
+-- deep copy of array settings (so a later mutation of the applied table does
+-- not alias back into the stored one); the spots handlers verify their writes
+-- by reading the settings back, so specs need applies to be observable.
 local function makePhoto(meta)
     meta = meta or {}
     meta.developSettings = meta.developSettings or {}
@@ -132,8 +133,11 @@ describe("HandlerSpots.addSpots", function()
     end)
 
     it("reports when the write was not accepted", function()
-        -- A photo whose applies never land: read-back sees no RetouchInfo.
+        -- This Lightroom version refuses the RetouchInfo write outright.
+        -- fakePhoto persists applies by default (read-back verification
+        -- depends on it), so the refusal has to be explicit here.
         local p1 = helper.fakePhoto({ id = "1", path = "/a.jpg" })
+        p1.applyDevelopSettings = function() end
         local _, Handler = setup({ photos = { p1 } })
 
         local r = Handler.addSpots({

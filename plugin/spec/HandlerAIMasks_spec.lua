@@ -62,9 +62,10 @@ local function makeControllerMock(opts, getActivePhoto)
     return controller, state
 end
 
--- A photo whose applyDevelopSettings actually lands in developSettings, so the
+-- A photo whose applyDevelopSettings lands in developSettings, so the
 -- handler's read-modify-write of MaskGroupBasedCorrections round-trips the way
--- it does in Lightroom. helper.fakePhoto only records the last write.
+-- it does in Lightroom. fakePhoto persists too now; this wrapper keeps the
+-- explicit seed-then-apply shape the read-modify-write tests depend on.
 local function makePhoto(meta)
     meta.developSettings = meta.developSettings or {}
     local photo = helper.fakePhoto(meta)
