@@ -1,0 +1,102 @@
+═══════════════════════════════════════════════════════════════════
+ ACTUALIZACIÓN A v3.1.2 — Lightroom MCP
+ Fix del ciclo de caídas del puente en Claude Desktop
+═══════════════════════════════════════════════════════════════════
+
+QUÉ PASABA
+──────────
+Tu log de Claude Desktop muestra, cinco veces, la línea:
+
+    Lightroom MCP server v3.1.0 running on stdio
+
+O sea: la máquina sigue ejecutando la v3.1.0. El fix nunca llegó a
+instalarse (además tenés la carpeta duplicada
+"pired-lightroom-mcp\pired-lightroom-mcp", que invita a reemplazar
+la carpeta equivocada).
+
+En la v3.1.0, cuando Claude Desktop reinicia el servidor (lo hace
+solo, cada tanto), el proceso nuevo choca con el lock del proceso
+viejo y muere al instante:
+
+    Another Lightroom MCP bridge is already running for ports
+    58763/58764 (pid XXXX)  →  Server disconnected
+
+La v3.1.2 arregla eso con tres capas de autocura:
+  - El proceso nuevo ESPERA (hasta 15 s) en vez de morir al instante.
+  - Le pide el paso al proceso viejo por protocolo de "yield": si el
+    viejo no tiene un cliente activo, se corre ordenadamente.
+  - Si el dueño del lock está muerto o abandonado (lock viejo de más
+    de 60 s sin refresco), se lo rota directamente.
+Además el log deja de llenarse de miles de líneas "ping failed".
+
+
+CÓMO ACTUALIZAR (automático, recomendado)
+─────────────────────────────────────────
+1. Descargá "pired-lightroom-mcp.zip" (el nuevo, de la conversación).
+
+2. Cerrá Claude Desktop POR COMPLETO: clic derecho en el ícono de la
+   bandeja de sistema (junto al reloj) → Quit / Salir.
+   Ojo: cerrar solo la ventana NO alcanza, el proceso sigue vivo.
+
+3. Abrí PowerShell (tecla Windows → escribí "powershell" → Enter)
+   y pegá esta línea (asume que el zip está en Descargas):
+
+   powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\Downloads\pired-lightroom-mcp\ACTUALIZAR-A-3.1.2.ps1"
+
+   ¿Descargaste el .ps1 por separado? Entonces:
+
+   powershell -ExecutionPolicy Bypass -File "$env:USERPROFILE\Downloads\ACTUALIZAR-A-3.1.2.ps1"
+
+4. El script solo:
+     • detecta la carpeta REAL que usa Claude (leyendo su config, así
+       no hay forma de equivocarse con las carpetas anidadas),
+     • cierra los procesos node del puente,
+     • respalda tu dist actual (backup con fecha) y copia la v3.1.2,
+     • limpia el lock viejo,
+     • verifica la versión instalada.
+
+5. Abrí Claude Desktop.
+
+
+CÓMO VERIFICAR QUE QUEDÓ
+───────────────────────
+1. Andá a %APPDATA%\Claude\logs\ (pegalo en la barra del Explorador).
+2. Abrí mcp-server-lightroom.log.
+3. Buscá la línea:
+
+       Lightroom MCP server v3.1.2 running on stdio
+
+4. Reiniciá Claude un par de veces: ya NO debería aparecer
+   "Another Lightroom MCP bridge is already running".
+
+
+SI PREFERÍS ACTUALIZAR A MANO
+────────────────────────────
+1. Cerrá Claude Desktop por completo y matá los procesos del puente
+   pegando esto en PowerShell:
+
+   Get-CimInstance Win32_Process -Filter "Name='node.exe'" |
+     Where-Object { $_.CommandLine -match 'lightroom' } |
+     ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
+
+2. Averiguá la carpeta REAL que usa Claude: abrí
+   %APPDATA%\Claude\claude_desktop_config.json y mirá la ruta en
+   "args" (en tu equipo suele ser
+   C:\Users\pablo\mcp-servers\mcp-lightroom\pired-lightroom-mcp\
+   pired-lightroom-mcp\server\... — ojo con el doble anidado).
+
+3. Extraé el zip y renombrá la carpeta "server\dist" actual a
+   "dist.vieja". Copiá la carpeta "server\dist" del zip adentro de
+   esa misma carpeta "server".
+
+4. Borrá el lock:
+   %USERPROFILE%\.config\lightroom-mcp\bridge-58763-58764.lock
+
+5. Abrí Claude Desktop y verificá el banner v3.1.2 (arriba).
+
+
+SI ALGO SALE MAL
+────────────────
+El script no borra nada: tu versión anterior queda respaldada como
+"dist.bak-FECHA" al lado de la carpeta dist. Para volver atrás,
+borrá la carpeta dist nueva y renombrá el backup a "dist".

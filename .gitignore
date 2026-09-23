@@ -1,0 +1,47 @@
+# Node.js
+node_modules/
+
+# Lua (project-local LuaRocks tree)
+lua_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+dist/
+build/
+*.tsbuildinfo
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.claude/
+
+# Testing
+coverage/
+.nyc_output/
+
+# Python skill tests
+__pycache__/
+*.py[cod]
+
+# Logs
+logs/
+*.log
+
+# Temporary files
+tmp/
+temp/

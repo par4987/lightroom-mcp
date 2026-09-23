@@ -1,0 +1,287 @@
+{
+  "manifest_version": "0.3",
+  "name": "@pired/lightroom-mcp",
+  "display_name": "Lightroom Classic AI",
+  "version": "3.1.2",
+  "description": "MCP server for Adobe Lightroom Classic: catalog search, presets, export, hybrid AI denoise, spot removal, local + AI + range masks, tone curves, Auto tone/WB, resets, process version, snapshots, selection & navigation, IPTC batch metadata, flags, color labels, virtual copies, smart collections, JPEG previews with inline images and watermarks.",
+  "long_description": "Connects any MCP client (Claude Desktop, Claude Code, or the bundled DeepSeek harness) to a running Adobe Lightroom Classic instance via a bundled Lua plugin. All 18 tools of the original lightroom-mcp (catalog search, collections, ratings, keywords, develop presets and settings, import and export) plus 38 additions: hybrid ai_denoise (native Adobe AI Denoise via keyboard automation with smart manual fallback), set_noise_reduction, set_white_balance, set_flags, get/add/clear_spots, add_local_adjustment (linear/radial masks), read_local_adjustments, list_watermarks, AI masks (subject/sky/background/objects/people/landscape) with adjustment presets, range masks (luminance/color/depth), mask inventory management, tone curves, official Auto tone/WB, develop settings read, scoped resets, process version switching, develop snapshots, UI selection & filmstrip navigation, photo status (flag/rating/label), batch IPTC metadata, rotation, catalog removal (confirm-gated), folders, keywords, view filter, collection photos and sets, and JPEG previews attached as inline images (the 'preview gate' workflow). Server-side tool filtering via LIGHTROOM_MCP_TOOLS. The Lightroom plugin is auto-installed into Lightroom's Modules folder on first run; restart Lightroom once after install to load it.",
+  "author": {
+    "name": "pired (fork), Marcin Skalski (original)"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/pired/lightroom-mcp"
+  },
+  "license": "MIT",
+  "keywords": [
+    "lightroom",
+    "lightroom-classic",
+    "photography",
+    "adobe"
+  ],
+  "server": {
+    "type": "node",
+    "entry_point": "server/dist/index.js",
+    "mcp_config": {
+      "command": "node",
+      "args": [
+        "${__dirname}/server/dist/index.js"
+      ],
+      "env": {
+        "LIGHTROOM_MCP_REQUEST_PORT": "${user_config.request_port}",
+        "LIGHTROOM_MCP_RESPONSE_PORT": "${user_config.response_port}"
+      }
+    }
+  },
+  "tools": [
+    {
+      "name": "search_photos",
+      "description": "Search the catalog by filename, keywords, rating, or date."
+    },
+    {
+      "name": "get_selected_photos",
+      "description": "Photos currently selected in Lightroom (or the filmstrip)."
+    },
+    {
+      "name": "get_photo_metadata",
+      "description": "Detailed EXIF + develop metadata for a photo."
+    },
+    {
+      "name": "list_collections",
+      "description": "List all collections and collection sets."
+    },
+    {
+      "name": "create_collection",
+      "description": "Create a new collection."
+    },
+    {
+      "name": "add_to_collection",
+      "description": "Add photos to an existing collection."
+    },
+    {
+      "name": "set_keywords",
+      "description": "Add or remove keywords on photos."
+    },
+    {
+      "name": "set_rating",
+      "description": "Set star rating on photos."
+    },
+    {
+      "name": "import_photos",
+      "description": "Import photos into the catalog."
+    },
+    {
+      "name": "export_photos",
+      "description": "Export photos with format/quality/dimensions."
+    },
+    {
+      "name": "list_develop_presets",
+      "description": "List available Develop presets."
+    },
+    {
+      "name": "get_develop_preset",
+      "description": "Read the settings of one exact Develop preset."
+    },
+    {
+      "name": "compare_develop_presets",
+      "description": "Diff two Develop presets per setting."
+    },
+    {
+      "name": "create_develop_preset",
+      "description": "Create a versioned plugin-managed preset checkpoint from a photo."
+    },
+    {
+      "name": "export_develop_preset",
+      "description": "Copy a custom/checkpoint preset backing file to a destination."
+    },
+    {
+      "name": "apply_develop_preset",
+      "description": "Apply a Develop preset to photos."
+    },
+    {
+      "name": "copy_develop_settings",
+      "description": "Copy Develop settings from one photo to others."
+    },
+    {
+      "name": "set_develop_settings",
+      "description": "Set Develop settings directly on a photo."
+    },
+    {
+      "name": "ai_denoise",
+      "description": "Hybrid AI noise reduction: triggers Adobe's native AI Denoise (Photo > Enhance) via keyboard automation and verifies the new DNG; falls back to ISO-aware manual sliders."
+    },
+    {
+      "name": "set_noise_reduction",
+      "description": "Set manual noise reduction and sharpening sliders."
+    },
+    {
+      "name": "set_white_balance",
+      "description": "White balance via preset (As Shot/Auto/...) or Kelvin temperature + tint."
+    },
+    {
+      "name": "set_flags",
+      "description": "Set pick/reject flags on photos."
+    },
+    {
+      "name": "get_spots",
+      "description": "List the spot removal (heal/clone) spots of a photo."
+    },
+    {
+      "name": "add_spots",
+      "description": "Add heal/clone spots at normalized coordinates."
+    },
+    {
+      "name": "clear_spots",
+      "description": "Remove all spot removal spots."
+    },
+    {
+      "name": "add_local_adjustment",
+      "description": "Add a linear or radial local adjustment mask with exposure/color sliders."
+    },
+    {
+      "name": "read_local_adjustments",
+      "description": "Inspect the local masks a photo has, including AI masks."
+    },
+    {
+      "name": "list_watermarks",
+      "description": "List watermark presets usable with export_photos."
+    },
+    {
+      "name": "add_ai_mask",
+      "description": "Create an AI selection mask (Select Subject/Sky/Background/Objects/People/Landscape) with optional adjustment sliders applied to the new mask (Lightroom Classic 12.4+)."
+    },
+    {
+      "name": "list_masks",
+      "description": "List the masks of a photo through the Develop module (count plus each entry verbatim)."
+    },
+    {
+      "name": "remove_mask",
+      "description": "Remove one mask from a photo by id, verified through the before/after mask count."
+    },
+    {
+      "name": "set_tone_curve",
+      "description": "Set a point curve (main luminance or RGB channel) from [x, y] points in 0-255 space, or a built-in preset; endpoints are added automatically."
+    },
+    {
+      "name": "get_tone_curve",
+      "description": "Read a photo's tone curves: curve name plus main/red/green/blue point curves."
+    },
+    {
+      "name": "apply_auto",
+      "description": "Apply Lightroom's official Auto Tone and/or Auto White Balance commands, with a before/after slider diff per photo."
+    },
+    {
+      "name": "set_color_label",
+      "description": "Set the color label on photos (red/yellow/green/blue/purple/none), verified per photo."
+    },
+    {
+      "name": "create_virtual_copies",
+      "description": "Create virtual copies of photos (same file, independent develop settings)."
+    },
+    {
+      "name": "create_smart_collection",
+      "description": "Create a smart collection from rules (keywords, rating, dates, camera...), combined with AND or OR."
+    },
+    {
+      "name": "get_photo_preview",
+      "description": "Render a JPEG preview of a photo and attach it inline (the 'preview gate' workflow)."
+    },
+    {
+      "name": "get_develop_settings",
+      "description": "Read a photo's develop settings (basic sliders or the full set)."
+    },
+    {
+      "name": "reset_develop",
+      "description": "Reset all adjustments, specific tools, or specific parameters."
+    },
+    {
+      "name": "set_process_version",
+      "description": "Switch the process version (modernize old photos to unlock AI masking)."
+    },
+    {
+      "name": "create_snapshot",
+      "description": "Create a named develop snapshot (undo checkpoint)."
+    },
+    {
+      "name": "select_photos",
+      "description": "Set the Lightroom UI selection by ids or mode (all/none/inverse)."
+    },
+    {
+      "name": "navigate_photo",
+      "description": "Move to the next/previous photo in the filmstrip."
+    },
+    {
+      "name": "get_photo_status",
+      "description": "Read flag, rating and color label per photo."
+    },
+    {
+      "name": "batch_metadata",
+      "description": "Set IPTC text fields (title, caption, location, creator...) on many photos."
+    },
+    {
+      "name": "rotate_photo",
+      "description": "Rotate photos 90 degrees left or right (batch)."
+    },
+    {
+      "name": "remove_from_catalog",
+      "description": "Remove photos from the catalog (files are kept); requires confirm=true."
+    },
+    {
+      "name": "list_folders",
+      "description": "List the catalog's folder tree with photo counts."
+    },
+    {
+      "name": "list_keywords",
+      "description": "List top-level keywords with photo counts."
+    },
+    {
+      "name": "manage_view_filter",
+      "description": "Read, set or clear the Library view filter."
+    },
+    {
+      "name": "get_collection_photos",
+      "description": "List the photos of a collection (paginated)."
+    },
+    {
+      "name": "create_collection_set",
+      "description": "Create a collection set (optionally nested in a parent set)."
+    },
+    {
+      "name": "add_range_mask",
+      "description": "Create luminance/color/depth range masks with adjustments."
+    },
+    {
+      "name": "toggle_mask_overlay",
+      "description": "Toggle the red mask overlay in the Develop view."
+    },
+    {
+      "name": "set_mask_adjustments",
+      "description": "Apply local sliders to a mask the photo already has."
+    }
+  ],
+  "user_config": {
+    "request_port": {
+      "type": "string",
+      "title": "Plugin request port",
+      "description": "TCP port the Lightroom plugin listens on for requests. Must match the Plug-in Manager setting.",
+      "default": "58763",
+      "required": false
+    },
+    "response_port": {
+      "type": "string",
+      "title": "Plugin response port",
+      "description": "TCP port the Lightroom plugin sends responses on. Must match the Plug-in Manager setting.",
+      "default": "58764",
+      "required": false
+    }
+  },
+  "compatibility": {
+    "platforms": [
+      "darwin",
+      "win32"
+    ],
+    "runtimes": {
+      "node": ">=18.0.0"
+    }
+  }
+}

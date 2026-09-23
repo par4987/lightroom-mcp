@@ -1,0 +1,71 @@
+[tools]
+node = "24.21.0"
+bun = "1.4.2"
+lua = "5.5.1"
+# selene (Rust) is the Lua linter — see lua:lint. A native binary, so unlike
+# luacheck it does not run on the Lua above and is immune to Lua-version breaks.
+"aqua:Kampfkarren/selene" = "0.31.0"
+
+[env]
+# Project-local LuaRocks tree (busted) installed by `lua:deps`.
+_.path = ["lua_modules/bin"]
+
+[tasks.install]
+description = "Install dependencies"
+run = "cd server && npm install"
+
+[tasks.build]
+description = "Build TypeScript MCP server"
+run = "cd server && npm run build"
+
+[tasks.test]
+description = "Run tests"
+run = "cd server && npm test"
+
+[tasks.dev]
+description = "Build in watch mode"
+run = "cd server && npm run watch"
+
+[tasks.mcpb]
+description = "Build the .mcpb bundle for Claude Desktop / Claude Code"
+run = "node scripts/build-mcpb.mjs"
+
+[tasks.binary]
+description = "Build single-file binaries (macos + windows) via Bun"
+run = "node scripts/build-binary.mjs"
+
+[tasks."skill:test"]
+description = "Run Python tests for bundled skill scripts"
+# Discovered by glob, not named: this used to point at a skill directory that did
+# not exist, and CI stayed green only because the workflow's path filter never
+# fired. A missing skill must fail here, not pass silently.
+run = """
+set -eu
+found=0
+for skill in skills/*/; do
+  [ -d "$skill/tests" ] || continue
+  found=1
+  echo "== $skill"
+  if [ -f "$skill/requirements.txt" ]; then
+    python3 -m pip install --quiet --disable-pip-version-check -r "$skill/requirements.txt"
+  fi
+  ( cd "$skill" && python3 -m unittest discover -s tests -v )
+done
+if [ "$found" = "0" ]; then
+  echo "no skill has a tests/ directory -- nothing was verified" >&2
+  exit 1
+fi
+"""
+
+[tasks."lua:deps"]
+description = "Install Lua test rocks (busted) into lua_modules/"
+run = "test -x lua_modules/bin/busted || luarocks install --tree lua_modules busted"
+
+[tasks."lua:test"]
+description = "Run busted specs for the Lightroom plugin"
+depends = ["lua:deps"]
+run = "busted"
+
+[tasks."lua:lint"]
+description = "Lint the Lightroom plugin with selene"
+run = "selene plugin/LightroomMCP.lrplugin"

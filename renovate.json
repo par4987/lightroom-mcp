@@ -1,0 +1,9 @@
+{
+  "automerge": true,
+  "automergeStrategy": "squash",
+  "platformAutomerge": true,
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": [
+    "config:recommended"
+  ]
+}

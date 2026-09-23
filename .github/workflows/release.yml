@@ -1,0 +1,256 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Explicit version (e.g. 0.3.0). Leave blank to auto-bump.'
+        required: false
+        type: string
+      bump:
+        description: 'Auto-bump level when version is blank'
+        required: false
+        type: choice
+        default: minor
+        options: [patch, minor, major]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    name: Bump versions, tag, push
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Resolve version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_BUMP: ${{ inputs.bump }}
+        run: |
+          set -euo pipefail
+          if [ -n "$INPUT_VERSION" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            CURRENT=$(node -p "require('./server/package.json').version")
+            IFS='.' read -r MAJOR MINOR PATCH <<< "$CURRENT"
+            case "$INPUT_BUMP" in
+              major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
+              minor) MINOR=$((MINOR+1)); PATCH=0 ;;
+              patch) PATCH=$((PATCH+1)) ;;
+              *) echo "invalid bump: $INPUT_BUMP" >&2; exit 1 ;;
+            esac
+            VERSION="$MAJOR.$MINOR.$PATCH"
+          fi
+          if ! [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "invalid version: $VERSION" >&2; exit 1
+          fi
+          echo "VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+          echo "Resolved version: $VERSION"
+
+      - name: Fail if tag already exists
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null; then
+            echo "tag v$VERSION already exists" >&2; exit 1
+          fi
+
+      - name: Bump all version sources
+        run: |
+          node scripts/bump-version.mjs "$VERSION"
+          node scripts/bump-version.mjs --check
+
+      - name: Commit, tag, push
+        run: |
+          set -euo pipefail
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add server/package.json server/package-lock.json server/src/version.ts mcpb/manifest.json plugin/LightroomMCP.lrplugin/Info.lua
+          git commit -m "chore(release): v$VERSION"
+          git tag "v$VERSION"
+          git push origin HEAD:main
+          git push origin "v$VERSION"
+
+  build-bundle:
+    name: Build .mcpb + plugin zips + tarball
+    needs: prepare
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v${{ needs.prepare.outputs.version }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Build .mcpb
+        run: node scripts/build-mcpb.mjs
+
+      - name: Pack server tarball
+        working-directory: server
+        run: |
+          npm ci --ignore-scripts
+          npx tsc
+          npm pack
+
+      - name: Zip plugin bundles (per platform)
+        working-directory: plugin
+        run: |
+          zip -r ../LightroomMCP-macos.lrplugin.zip LightroomMCP.lrplugin
+          zip -r ../LightroomMCP-windows.lrplugin.zip LightroomMCP.lrplugin
+
+      - name: Stage release artifacts at repo root
+        run: |
+          cp build/lightroom-mcp.mcpb "lightroom-mcp-${VERSION}.mcpb"
+          cp server/mskalski-lightroom-mcp-*.tgz .
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: bundle-artifacts
+          path: |
+            lightroom-mcp-*.mcpb
+            LightroomMCP-macos.lrplugin.zip
+            LightroomMCP-windows.lrplugin.zip
+            mskalski-lightroom-mcp-*.tgz
+          retention-days: 7
+
+  build-binaries:
+    name: Build single-file binaries (${{ matrix.target }})
+    needs: prepare
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: bun-darwin-arm64
+            os: macos-latest
+            asset: lightroom-mcp-darwin-arm64
+          - target: bun-darwin-x64
+            os: macos-latest
+            asset: lightroom-mcp-darwin-x64
+          - target: bun-windows-x64
+            os: windows-latest
+            asset: lightroom-mcp-windows-x64.exe
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v${{ needs.prepare.outputs.version }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: 1.4.2
+
+      - name: Build binary
+        shell: bash
+        run: node scripts/build-binary.mjs --targets=${{ matrix.target }}
+
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: binary-${{ matrix.target }}
+          path: build/bin/${{ matrix.asset }}
+          retention-days: 7
+
+  publish-npm:
+    name: Publish to npm
+    needs: [prepare, build-bundle]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v${{ needs.prepare.outputs.version }}
+
+      - name: Setup Node.js (npm registry)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '24.21.0'
+          registry-url: 'https://registry.npmjs.org'
+          cache: npm
+          cache-dependency-path: server/package-lock.json
+
+      - name: Ensure npm CLI supports trusted publishing
+        run: npm install -g npm@latest
+
+      - name: Install + build
+        working-directory: server
+        run: |
+          npm ci --ignore-scripts
+          npx tsc
+
+      - name: Publish via npm trusted publishing (OIDC)
+        working-directory: server
+        run: npm publish
+
+  publish:
+    name: Publish GitHub release
+    needs: [prepare, build-bundle, build-binaries]
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.prepare.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: v${{ needs.prepare.outputs.version }}
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          path: release-artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la release-artifacts/
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          cd release-artifacts
+          gh release create "v$VERSION" \
+            "lightroom-mcp-${VERSION}.mcpb" \
+            LightroomMCP-macos.lrplugin.zip \
+            LightroomMCP-windows.lrplugin.zip \
+            "mskalski-lightroom-mcp-${VERSION}.tgz" \
+            lightroom-mcp-darwin-arm64 \
+            lightroom-mcp-darwin-x64 \
+            lightroom-mcp-windows-x64.exe \
+            --title "v$VERSION" \
+            --generate-notes

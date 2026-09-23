@@ -1,0 +1,73 @@
+{
+  "name": "@pired/lightroom-mcp",
+  "version": "3.1.2",
+  "description": "MCP server for Adobe Lightroom Classic with hybrid AI Denoise, spot removal, local + AI + range masks, tone curves, Auto tone/WB, inline JPEG previews, smart collections and watermarking. Fork of Automaat/lightroom-mcp.",
+  "type": "module",
+  "main": "dist/index.js",
+  "bin": {
+    "pired-lightroom-mcp": "dist/index.js"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "files": [
+    "dist",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "tsc && node scripts/sync-bundle.mjs",
+    "check": "tsc --noEmit && tsc -p tsconfig.test.json",
+    "lint": "eslint src tests",
+    "watch": "tsc --watch",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage --runInBand",
+    "prepare": "npm run build",
+    "prepublishOnly": "npm run build"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "lightroom",
+    "lightroom-classic",
+    "photography",
+    "ai-denoise",
+    "noise-reduction",
+    "spot-removal",
+    "ai-masks",
+    "claude",
+    "deepseek",
+    "codex",
+    "chatgpt"
+  ],
+  "author": "pired (fork), Marcin Skalski (original)",
+  "license": "MIT",
+  "homepage": "https://github.com/pired/lightroom-mcp#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pired/lightroom-mcp.git",
+    "directory": "server"
+  },
+  "bugs": {
+    "url": "https://github.com/pired/lightroom-mcp/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.30.0",
+    "ajv": "^8.20.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^26.5.1",
+    "@typescript/native": "npm:typescript@^7.0.2",
+    "eslint": "^10.10.0",
+    "eslint-plugin-unused-imports": "^4.4.1",
+    "jest": "^30.5.1",
+    "ts-jest": "^29.4.12",
+    "typescript": "npm:@typescript/typescript6@^6.0.2",
+    "typescript-eslint": "^8.70.0"
+  }
+}

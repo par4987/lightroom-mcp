@@ -1,0 +1,59 @@
+local LrPathUtils = import 'LrPathUtils'
+local LrFileUtils = import 'LrFileUtils'
+
+local Log = require 'Log'
+
+local WatermarkHandler = {}
+
+-- =====================================================================
+-- Watermark presets
+-- =====================================================================
+--
+-- Lightroom stores watermark presets as files under
+-- <appPrefs>/Watermark Presets/<preset name>.watermark, where <appPrefs> is
+-- the root of Lightroom's own preferences folder (getStandardFilePath
+-- ("appPrefs"), i.e. %APPDATA%\Adobe\Lightroom on Windows). Enumerating that
+-- directory gives the exact names the export watermarking option expects.
+
+function WatermarkHandler.listWatermarks(_args)
+    local appPrefs = LrPathUtils.getStandardFilePath("appPrefs")
+    if not appPrefs then
+        error("Could not resolve Lightroom's preferences folder on this system")
+    end
+
+    local presetsDir = LrPathUtils.child(appPrefs, "Watermark Presets")
+
+    local names = {}
+    local ok, entries = pcall(function() return LrFileUtils.directoryEntries(presetsDir) end)
+    if ok and type(entries) == "table" then
+        for _, entry in ipairs(entries) do
+            if type(entry) == "string" then
+                local name = entry:match("^(.*)%.watermark$")
+                if name and name ~= "" then
+                    table.insert(names, name)
+                end
+            end
+        end
+    end
+
+    table.sort(names, function(a, b) return a:lower() < b:lower() end)
+
+    Log.info(string.format("list_watermarks: %d presets found", #names))
+
+    local result = {
+        success = true,
+        watermarks = names,
+        count = #names,
+        presets_dir = presetsDir,
+    }
+
+    if #names == 0 then
+        result.message = "No watermark presets found. Create them in Lightroom via "
+            .. "Edit > Edit Watermarks..., then this tool (and export_photos' watermark option) "
+            .. "can reference them by name."
+    end
+
+    return result
+end
+
+return WatermarkHandler

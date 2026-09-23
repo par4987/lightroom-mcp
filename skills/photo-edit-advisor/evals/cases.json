@@ -1,0 +1,166 @@
+{
+  "_about": [
+    "Reference cases for the photo-edit-advisor skill.",
+    "",
+    "Photos are named by catalogue path and id, never bundled: the RAW files live",
+    "on the photographer's disk and the JPEGs are re-exported per run. That keeps",
+    "the suite in version control without a binary fixture set, and it means the",
+    "expectations below describe the PHOTOS, not a particular export.",
+    "",
+    "Every expectation here was measured against Lightroom Classic 15.4 during the",
+    "session that built this skill, and the dust positions were cross-checked",
+    "against Lightroom's own Dust Removal regions. Where a number is a judgement",
+    "rather than a measurement it is written as a band, not a point."
+  ],
+  "export": {
+    "format": "jpeg",
+    "quality": 92,
+    "note": "export_photos does NOT create the destination folder; create it first"
+  },
+  "cases": [
+    {
+      "id": "arocena-dust-present",
+      "tier": "A",
+      "what_it_checks": "the dust pipeline finds known sensor dirt and nothing else",
+      "requires": [
+        "These photos must have NO Dust Removal applied: check FilterList is [] via",
+        "get_develop_settings with fields 'all' and max_depth 16. They were edited",
+        "during the session that produced these numbers, so reproducing this case",
+        "means resetting them first -- which also discards the removal.",
+        "This case and 'removal-verified' are opposite states of the same photo and",
+        "cannot both be exported from the catalogue at once."
+      ],
+      "frames": [
+        {"photo_id": 742402, "file": "DSC02993.jpg", "scene": "falls",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]},
+        {"photo_id": 742403, "file": "DSC02994.jpg", "scene": "falls",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]},
+        {"photo_id": 742501, "file": "DSC03092.jpg", "scene": "river-long",
+         "lens": "E 55-210mm F4.5-6.3 OSS", "crop": [0.078, 0.922, 0.0, 1.0]}
+      ],
+      "expect": {
+        "persistent_count": 3,
+        "persistent_near": [[0.574, 0.134], [0.298, 0.117], [0.190, 0.099]],
+        "tolerance": 0.015,
+        "attribution_warning": true,
+        "_why_warning": "two lenses: the distortion profiles differ, so positions are not comparable"
+      }
+    },
+    {
+      "id": "salta-no-dust",
+      "tier": "A",
+      "what_it_checks": "genuinely independent viewpoints with nothing to find return nothing",
+      "frames": [
+        {"photo_id": 471979, "file": "DSC09460.jpg", "scene": "03ene-1805",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]},
+        {"photo_id": 473105, "file": "DSC09463.jpg", "scene": "03ene-1805",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]},
+        {"photo_id": 472923, "file": "DSC09299.jpg", "scene": "03ene-1148",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]},
+        {"photo_id": 472771, "file": "DSC09294.jpg", "scene": "02ene-1935",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]},
+        {"photo_id": 472519, "file": "DSC09296.jpg", "scene": "02ene-1935",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]}
+      ],
+      "expect": {
+        "persistent_count": 0,
+        "_why": "cloudy skies full of structure: dust is not observable, which is not the same as absent"
+      }
+    },
+    {
+      "id": "salta-bad-scene-tags",
+      "tier": "A",
+      "what_it_checks": "one viewpoint mislabelled as two scenes gets flagged for review",
+      "frames": [
+        {"photo_id": 471979, "file": "DSC09460.jpg", "scene": "early",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]},
+        {"photo_id": 473105, "file": "DSC09463.jpg", "scene": "early",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]},
+        {"photo_id": 472310, "file": "DSC09477.jpg", "scene": "golden",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]},
+        {"photo_id": 472207, "file": "DSC09480.jpg", "scene": "golden",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]}
+      ],
+      "expect": {
+        "min_warned": 3,
+        "max_persistent": 4,
+        "_why": "the two tags are one viewpoint; the skyline and cloud band repeat and score 0.67-0.80",
+        "_why_max": "without the Hessian edge test this returns 5, the fifth being the sun"
+      }
+    },
+    {
+      "id": "ridges-are-rejected",
+      "tier": "A",
+      "what_it_checks": "cloud edges and skylines are dropped before anything is correlated",
+      "requires": [
+        "This case exists because the eval suite once passed with the edge test",
+        "disabled. A frame of banded cloud produces thousands of ridge responses,",
+        "and a Laplacian answers to them as loudly as to a blob."
+      ],
+      "frames": [
+        {"photo_id": 472310, "file": "DSC09477.jpg",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]}
+      ],
+      "expect": {
+        "min_edge_rejected": 1000,
+        "max_spots": 6,
+        "_why": "with the edge test: 4 spots and ~7000 rejections. Without it: 14 spots."
+      }
+    },
+    {
+      "id": "noise-headroom-ordering",
+      "tier": "A",
+      "what_it_checks": "shadow headroom orders by how noisy the shadows actually are",
+      "frames": [
+        {"photo_id": 742402, "file": "DSC02993.jpg"},
+        {"photo_id": 742364, "file": "DSC02955.jpg"},
+        {"photo_id": 742501, "file": "DSC03092.jpg"},
+        {"photo_id": 742332, "file": "DSC02923.jpg"}
+      ],
+      "expect": {
+        "headroom_descending": ["DSC02993.jpg", "DSC02955.jpg", "DSC03092.jpg", "DSC02923.jpg"],
+        "headroom_bands": {
+          "DSC02993.jpg": [1.0, 2.0],
+          "DSC02955.jpg": [0.8, 1.8],
+          "DSC03092.jpg": [0.2, 1.0],
+          "DSC02923.jpg": [-0.5, 0.6]
+        }
+      }
+    },
+    {
+      "id": "removal-verified",
+      "tier": "A",
+      "what_it_checks": "after Lightroom's Dust Removal the spots are gone from a re-export",
+      "requires": [
+        "Distraction Removal (Dust) must be APPLIED in the Lightroom UI -- there is",
+        "no SDK call for it. Export that state under the name below so it does not",
+        "collide with the clean export used by 'arocena-dust-present'."
+      ],
+      "frames": [
+        {"photo_id": 742402, "file": "DSC02993_after.jpg", "scene": "falls",
+         "lens": "E PZ 16-50mm F3.5-5.6 OSS", "crop": [0.078, 0.922, 0.0, 1.0]}
+      ],
+      "expect": {
+        "no_spot_near": [[0.574, 0.064], [0.297, 0.043], [0.186, 0.019]],
+        "tolerance": 0.02,
+        "_frame": "these are EXPORT coordinates, not sensor coordinates"
+      }
+    },
+    {
+      "id": "propose-landscape",
+      "tier": "B",
+      "what_it_checks": "the edit proposed for a landscape with sky, judged against the rubric",
+      "frames": [{"photo_id": 471979, "file": "DSC09460.jpg"}],
+      "prompt": "Propose an edit for this photo.",
+      "expect": {"rubric": "reference/../evals/rubric.md"}
+    },
+    {
+      "id": "propose-backlit-people",
+      "tier": "B",
+      "what_it_checks": "two backlit people against bright water; the light should drive the plan",
+      "frames": [{"photo_id": 742402, "file": "DSC02993.jpg"}],
+      "prompt": "Propose an edit for this photo.",
+      "expect": {"rubric": "reference/../evals/rubric.md"}
+    }
+  ]
+}
