@@ -150,6 +150,128 @@ describe('createCallToolHandler preview image attachment', () => {
   });
 });
 
+describe('createCallToolHandler warning screenshot attachment', () => {
+  function writeTempShot(name: string, bytes: number[] | Buffer): string {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'lrmcp-warn-'));
+    const file = path.join(dir, name);
+    fs.writeFileSync(file, Buffer.from(bytes));
+    return file;
+  }
+
+  it('inlines add_ai_mask warning screenshots after the JSON, deduplicated', async () => {
+    const a = writeTempShot('warn_subject_early_1_1.jpg', [0xff, 0xd8, 1]);
+    const b = writeTempShot('warn_subject_final_1_2.jpg', [0xff, 0xd8, 9]);
+    const handler = makeHandler({
+      call: async () => ({
+        id: '1',
+        result: {
+          success: false,
+          failed: 1,
+          warning: 'AI detection produced no mask on 1 photo(s); read the attached screenshots.',
+          // Top-level aggregation and the per-photo fields name the same
+          // files: the collector must not inline either of them twice.
+          warning_screenshots: [a, b],
+          results: [
+            {
+              photo: { id: 914 },
+              failure_kind: 'detection_failed',
+              warning_screenshots: [a, b],
+              warning_screenshot: a,
+              suggested_action: "no subject was detected: try selection_type 'background'",
+            },
+          ],
+        },
+      }),
+    });
+
+    const result = await handler('add_ai_mask', { photo_ids: [914], selection_type: 'subject' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content).toHaveLength(3);
+    expect(result.content[0].type).toBe('text'); // the JSON block stays first
+    const first = result.content[1];
+    const second = result.content[2];
+    expect(first.type).toBe('image');
+    expect(second.type).toBe('image');
+    if (first.type === 'image' && second.type === 'image') {
+      expect(first.mimeType).toBe('image/jpeg');
+      expect(first.data).toBe(Buffer.from([0xff, 0xd8, 1]).toString('base64'));
+      expect(second.data).toBe(Buffer.from([0xff, 0xd8, 9]).toString('base64'));
+    }
+  });
+
+  it('picks the mime type from the file extension', async () => {
+    const png = writeTempShot('warn_subject_final_1_1.png', [0x89, 0x50, 0x4e, 0x47]);
+    const handler = makeHandler({
+      call: async () => ({
+        id: '1',
+        result: { success: false, results: [{ warning_screenshot: png }] },
+      }),
+    });
+
+    const result = await handler('add_ai_mask', { photo_ids: [914], selection_type: 'subject' });
+
+    const image = result.content[1];
+    expect(image.type).toBe('image');
+    if (image.type === 'image') expect(image.mimeType).toBe('image/png');
+  });
+
+  it('warns honestly when a warning screenshot file is missing', async () => {
+    const handler = makeHandler({
+      call: async () => ({
+        id: '1',
+        result: {
+          success: false,
+          results: [
+            { warning_screenshots: [path.join(os.tmpdir(), 'definitely-not-here-warn.jpg')] },
+          ],
+        },
+      }),
+    });
+
+    const result = await handler('add_ai_mask', { photo_ids: [914], selection_type: 'subject' });
+
+    expect(result.isError).toBeUndefined();
+    expect(result.content).toHaveLength(2);
+    expect(result.content[0].type).toBe('text');
+    expect((result.content[0] as { text: string }).text).toMatch(/Warning screenshot could not be read back/);
+    expect(result.content[1].type).toBe('text');
+  });
+
+  it('inlines at most 6 warning screenshots and reports the overflow', async () => {
+    const files = Array.from({ length: 8 }, (_, i) => writeTempShot(`warn_${i}.jpg`, [i]));
+    const handler = makeHandler({
+      call: async () => ({
+        id: '1',
+        result: { success: false, warning_screenshots: files, results: [] },
+      }),
+    });
+
+    const result = await handler('add_ai_mask', { photo_ids: [914], selection_type: 'subject' });
+
+    // 1 JSON text + 1 overflow warning + 6 images.
+    expect(result.content).toHaveLength(8);
+    expect((result.content[0] as { text: string }).text).toMatch(/2 of 8 warning screenshots were not inlined/);
+    expect(result.content.slice(2).every((block) => block.type === 'image')).toBe(true);
+  });
+
+  it('reports a screenshot over the per-file size cap instead of inlining it', async () => {
+    const big = writeTempShot('warn_big.jpg', Buffer.alloc(5 * 1024 * 1024 + 1));
+    const handler = makeHandler({
+      call: async () => ({
+        id: '1',
+        result: { success: false, warning_screenshots: [big], results: [] },
+      }),
+    });
+
+    const result = await handler('add_ai_mask', { photo_ids: [914], selection_type: 'subject' });
+
+    expect(result.content).toHaveLength(2);
+    expect(result.content[0].type).toBe('text');
+    expect((result.content[0] as { text: string }).text).toMatch(/over the 5242880 inline cap/);
+  });
+});
+
 describe('structuredContent', () => {
   const previewResult = {
     success: true,

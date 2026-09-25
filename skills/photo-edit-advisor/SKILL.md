@@ -160,7 +160,11 @@ when asked to.
 Be careful about what you promise to apply. `add_ai_mask` is unreliable on this
 build — the underlying call returns nil even when it works from the UI — so verify
 with `list_masks` and never report a mask as created on the strength of the return
-value.
+value. When it genuinely fails (nothing detected after the retries), the response
+also carries screenshots of Lightroom's own warning banner as attached images, plus
+`failure_kind` and `suggested_action`: read the image for what Lightroom actually
+said before choosing a different `selection_type` or falling back to
+`add_local_adjustment`.
 
 ## Honest limits
 

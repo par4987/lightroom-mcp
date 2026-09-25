@@ -80,6 +80,95 @@ async function attachPreviewImage(
   }
 }
 
+/**
+ * AI-mask detection failures (add_ai_mask) carry screenshot paths: the
+ * plugin photographed the Lightroom WINDOW while Lightroom's "could not
+ * find..." banner was on screen, because the SDK cannot read banner text
+ * at all. A vision-capable client reads the inlined image and picks the
+ * fallback; text-only clients still get the paths, `failure_kind` and
+ * `suggested_action` from the JSON text block.
+ *
+ * Top-level `warning_screenshots` plus each photo's `warning_screenshots`
+ * / `warning_screenshot` are collected in order (deduplicated) and inlined
+ * up to this cap. Anything that cannot be inlined — past the cap, over the
+ * per-file size limit, unreadable — surfaces as a `Warning:` text block,
+ * so a screenshot never silently vanishes for a text-only harness.
+ */
+const MAX_INLINE_WARNING_SHOT_IMAGES = 6;
+
+/** Paths of the Lightroom-window screenshots a failed add_ai_mask captured. */
+function collectWarningShotPaths(result: PluginToolResult): string[] {
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  const add = (value: unknown): void => {
+    if (typeof value === "string" && value !== "" && !seen.has(value)) {
+      seen.add(value);
+      paths.push(value);
+    }
+  };
+
+  if (Array.isArray(result.warning_screenshots)) {
+    for (const p of result.warning_screenshots) add(p);
+  }
+  if (Array.isArray(result.results)) {
+    for (const entry of result.results) {
+      if (entry === null || typeof entry !== "object") continue;
+      const e = entry as { warning_screenshots?: unknown; warning_screenshot?: unknown };
+      if (Array.isArray(e.warning_screenshots)) {
+        for (const p of e.warning_screenshots) add(p);
+      }
+      add(e.warning_screenshot);
+    }
+  }
+  return paths;
+}
+
+function mimeTypeForShot(filePath: string): string {
+  return filePath.toLowerCase().endsWith(".png") ? "image/png" : "image/jpeg";
+}
+
+async function attachWarningShots(
+  result: PluginToolResult,
+): Promise<{ images: ToolContentBlock[]; warnings: string[] }> {
+  const paths = collectWarningShotPaths(result);
+  const images: ToolContentBlock[] = [];
+  const warnings: string[] = [];
+  if (paths.length === 0) return { images, warnings };
+
+  const overflow = paths.slice(MAX_INLINE_WARNING_SHOT_IMAGES);
+  if (overflow.length > 0) {
+    warnings.push(
+      `${overflow.length} of ${paths.length} warning screenshots were not inlined ` +
+        `(cap of ${MAX_INLINE_WARNING_SHOT_IMAGES} images per call): ${overflow.join(", ")}`,
+    );
+  }
+
+  for (const filePath of paths.slice(0, MAX_INLINE_WARNING_SHOT_IMAGES)) {
+    try {
+      const bytes = await readFile(filePath);
+      if (bytes.byteLength > MAX_INLINE_IMAGE_BYTES) {
+        warnings.push(
+          `Warning screenshot is ${bytes.byteLength} bytes ` +
+            `(over the ${MAX_INLINE_IMAGE_BYTES} inline cap); open it from ${filePath}`,
+        );
+        continue;
+      }
+      images.push({
+        type: "image",
+        data: bytes.toString("base64"),
+        mimeType: mimeTypeForShot(filePath),
+      });
+    } catch (err) {
+      warnings.push(
+        `Warning screenshot could not be read back ` +
+          `(${err instanceof Error ? err.message : String(err)}); ` +
+          `it should still exist at ${filePath}`,
+      );
+    }
+  }
+  return { images, warnings };
+}
+
 export function createCallToolHandler(deps: ToolHandlerDeps) {
   return async (name: string, args: unknown): Promise<ToolResponse> => {
     const invalid = validateToolArgs(name, args);
@@ -116,11 +205,15 @@ export function createCallToolHandler(deps: ToolHandlerDeps) {
       if (result) {
         const { image, warning } = await attachPreviewImage(result);
         if (image) content.push(image);
-        if (warning) {
-          content.unshift({
-            type: "text",
-            text: `Warning: ${warning}`,
-          });
+        const shots = await attachWarningShots(result);
+        for (const shot of shots.images) content.push(shot);
+        const warnings = [...(warning ? [warning] : []), ...shots.warnings];
+        if (warnings.length > 0) {
+          content.unshift(
+            ...warnings.map(
+              (message): ToolContentBlock => ({ type: "text", text: `Warning: ${message}` }),
+            ),
+          );
         }
       }
 

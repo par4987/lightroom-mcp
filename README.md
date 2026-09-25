@@ -257,6 +257,7 @@ Usan la **API oficial de máscaras** del SDK (`LrDevelopController.createNewMask
 - Los `adjustments` se aplican **a la máscara nueva** en la misma pasada (temperatura/matiz local van por `add_local_adjustment`, que maneja sus unidades propias).
 - `list_masks` lista las máscaras de la foto (el formato de cada entrada varía según la versión) y `remove_mask` borra por id verificando el conteo antes/después.
 - Estas herramientas **manejan el módulo Revelar por vos** (cambian a Revelar y seleccionan cada foto); Lightroom tiene que estar abierto.
+- Si la IA **no encuentra nada** en la foto, la entrada fallida trae `failure_kind`, `suggested_action` (qué probar en su lugar) y `warning_screenshots`: capturas de la ventana de Lightroom con su propio aviso, que el servidor adjunta como imágenes cuando el cliente puede verlas (máx. 6 por llamada). La captura necesita la sesión desbloqueada; si no, `warning_capture_error` lo explica en lugar de adjuntar una imagen que no corresponde.
 
 ### Curva tonal (`set_tone_curve` / `get_tone_curve`)
 

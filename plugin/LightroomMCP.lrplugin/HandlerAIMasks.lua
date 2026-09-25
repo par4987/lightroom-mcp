@@ -2,6 +2,8 @@ local LrApplication = import 'LrApplication'
 local LrTasks = import 'LrTasks'
 local LrApplicationView = import 'LrApplicationView'
 local LrDevelopController = import 'LrDevelopController'
+local LrPathUtils = import 'LrPathUtils'
+local LrFileUtils = import 'LrFileUtils'
 
 local PhotoLookup = require 'PhotoLookup'
 local MaskSummary = require 'MaskSummary'
@@ -103,6 +105,25 @@ local SETTLE_AFTER_TOOL_SELECT_S = 1.0
 local MASK_CREATE_MAX_ATTEMPTS = 8
 local MASK_CREATE_RETRY_DELAY_S = 1.5
 
+-- When createNewMask produces no mask, Lightroom shows a transient
+-- toast/banner explaining why (e.g. "Could not find subject in this
+-- photo"). The SDK cannot read that text: LrDialogs has no message-text
+-- API and the MCP log is ours, not Lightroom's. The only channel to the
+-- caller is therefore a PHOTOGRAPH of the Lightroom window, taken while
+-- the banner is still on screen — captureWindowScreenshot() below drives
+-- a PowerShell helper (same temp-script/result-file protocol as
+-- HandlerAI.sendNativeDenoiseKeys) because LrTasks.execute captures no
+-- stdout. The file lands in the get_photo_preview previews folder and the
+-- paths are returned per photo under `warning_screenshots` (first one
+-- also under `warning_screenshot`).
+--
+-- Banners last a few seconds while the retry loop runs 10–30s, so the
+-- shot is taken twice: once early (fast types: attempt 3 ≈ t=3s; slow
+-- types: attempt 6 ≈ t=10s — the moment a detection failure's banner is
+-- most likely up) and once at failure time (catches late failures). On a
+-- photo that eventually succeeds the early file is deleted again.
+local WARN_SHOT_KEEP = 40
+
 local function buildAdjustments(input)
     if input == nil then return {} end
     if type(input) ~= "table" then
@@ -147,6 +168,231 @@ local function clampRange(v, min, max)
     if v < min then return min end
     if v > max then return max end
     return v
+end
+
+-- "DSC_0123 (cópia).NEF" -> "dsc_0123_cpa" : Windows-safe, ascii-ish.
+-- (HandlerPreview keeps the same helper local; it is not exported.)
+local function sanitizeBase(filename)
+    local base = filename or "photo"
+    base = base:gsub("%.[^%.]*$", "") -- drop extension
+    base = base:lower():gsub("[^%w%-_]", "")
+    if #base > 40 then base = base:sub(1, 40) end
+    if base == "" then base = "photo" end
+    return base
+end
+
+-- The get_photo_preview previews folder; warn_*.jpg live alongside the
+-- preview_*.jpg files. HandlerPreview's prune matches only preview_*, so
+-- this module prunes its own warn_* files below.
+local function warnShotsDir()
+    local config = LrPathUtils.child(
+        LrPathUtils.getStandardFilePath("home"), ".config")
+    local base = LrPathUtils.child(
+        LrPathUtils.child(config, "lightroom-mcp"), "previews")
+    LrFileUtils.createAllDirectories(base)
+    return base
+end
+
+local warnShotSeq = 0
+
+-- Delete the oldest warn_*.jpg past WARN_SHOT_KEEP. Filenames are
+-- warn_<base>_<label>_<timestamp>_<seq>.jpg, so sorting on the timestamp
+-- keeps them in creation order. Best-effort, never fatal.
+local function pruneWarnShots(dir)
+    local ok, entries = pcall(function()
+        return LrFileUtils.directoryEntries(dir)
+    end)
+    if not ok or type(entries) ~= "table" then return end
+    local stamped = {}
+    for _, name in ipairs(entries) do
+        local ts = name:match("^warn_.-(%d+)_(%d+)%.jpg$")
+        if ts then table.insert(stamped, { name = name, ts = ts }) end
+    end
+    if #stamped <= WARN_SHOT_KEEP then return end
+    table.sort(stamped, function(a, b) return a.ts < b.ts end)
+    for i = 1, #stamped - WARN_SHOT_KEEP do
+        pcall(function()
+            LrFileUtils.delete(LrPathUtils.child(dir, stamped[i].name))
+        end)
+    end
+end
+
+local WARN_SHOT_WINDOW_TITLE = "Lightroom"
+
+-- Photograph the Lightroom WINDOW (not the photo: requestJpegThumbnail
+-- renders the image, which is exactly what the warning banner does NOT
+-- contain) while the warning banner is on screen. Writes a temp
+-- PowerShell helper — LrTasks.execute captures no stdout, hence the
+-- result-file protocol shared with HandlerAI.sendNativeDenoiseKeys — and
+-- runs it synchronously. The helper only copies the screen once
+-- Lightroom owns the foreground: on a locked session (verified live:
+-- AppActivate cannot move focus to the secure desktop) CopyFromScreen
+-- would photograph the lock screen instead of the banner, so it refuses
+-- with 'window-not-foreground' rather than lie to the vision client.
+-- Returns (outPath, nil) or (nil, errmsg).
+local function captureWindowScreenshot(filename, label)
+    if WIN_ENV == nil and MAC_ENV == nil then
+        -- Test environment (busted): no OS to automate.
+        return nil, "no OS automation in this environment (test)"
+    end
+    if not WIN_ENV then
+        return nil, "Lightroom window capture is Windows-only"
+    end
+
+    local dirOk, dirOrErr = pcall(warnShotsDir)
+    if not dirOk then
+        return nil, "could not create screenshot dir: " .. tostring(dirOrErr)
+    end
+
+    warnShotSeq = warnShotSeq + 1
+    local outName = string.format("warn_%s_%s_%d_%d.jpg",
+        sanitizeBase(filename), label or "shot", os.time(), warnShotSeq)
+    local outPath = LrPathUtils.child(dirOrErr, outName)
+
+    local tempDir = LrPathUtils.getStandardFilePath("temp")
+    local scriptPath = LrPathUtils.child(tempDir, "lightroom-mcp-warn-shot.ps1")
+    local resultPath = LrPathUtils.child(tempDir, "lightroom-mcp-warn-shot.result")
+    pcall(function() LrFileUtils.delete(resultPath) end)
+
+    -- No path is embedded inside the script body (they arrive as named
+    -- parameters), so nothing needs PowerShell-quote escaping here.
+    local script = table.concat({
+        "param(",
+        "    [string]$ResultPath,",
+        "    [string]$OutPath,",
+        "    [string]$WindowTitle",
+        ")",
+        "$ErrorActionPreference = 'Stop'",
+        -- Status is a plain variable, written ONCE at the end: `exit` inside
+        -- a try block is a catchable error in Windows PowerShell, which would
+        -- overwrite 'no-window'/'bad-rect' from the catch below.
+        "$status = 'ok'",
+        "try {",
+        "    Add-Type -AssemblyName System.Windows.Forms",
+        "    Add-Type -AssemblyName System.Drawing",
+        "    Add-Type @\"",
+        "using System;",
+        "using System.Runtime.InteropServices;",
+        "public struct LrRECT {",
+        "    public int Left;",
+        "    public int Top;",
+        "    public int Right;",
+        "    public int Bottom;",
+        "}",
+        "public static class LrWin {",
+        "    [DllImport(\"user32.dll\")] public static extern bool SetProcessDPIAware();",
+        "    [DllImport(\"user32.dll\")] public static extern bool GetWindowRect(IntPtr hWnd, out LrRECT lpRect);",
+        "    [DllImport(\"user32.dll\")] public static extern bool IsIconic(IntPtr hWnd);",
+        "    [DllImport(\"user32.dll\")] public static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);",
+        "    [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();",
+        "    [DllImport(\"user32.dll\")] public static extern bool SetForegroundWindow(IntPtr hWnd);",
+        "    [DllImport(\"user32.dll\")] public static extern int GetWindowThreadProcessId(IntPtr hWnd, out int lpdwProcessId);",
+        "}",
+        "\"@",
+        "    [void][LrWin]::SetProcessDPIAware()",
+        "    $proc = $null",
+        "    try { $proc = Get-Process -Name $WindowTitle -ErrorAction Stop | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1 } catch {}",
+        "    if (-not $proc) {",
+        "        $proc = Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle -like ('*' + $WindowTitle + '*') -and $_.MainWindowHandle -ne 0 } | Select-Object -First 1",
+        "    }",
+        "    if (-not $proc) {",
+        "        $status = 'no-window'",
+        "    } else {",
+        "        $hwnd = $proc.MainWindowHandle",
+        "        if ([LrWin]::IsIconic($hwnd)) { [void][LrWin]::ShowWindow($hwnd, 9); Start-Sleep -Milliseconds 400 }",
+        "        $shell = New-Object -ComObject WScript.Shell",
+        "        [void]$shell.AppActivate($proc.Id)",
+        "        [void][LrWin]::SetForegroundWindow($hwnd)",
+        "        Start-Sleep -Milliseconds 400",
+        "        $fg = [LrWin]::GetForegroundWindow()",
+        "        $fgPid = 0",
+        "        [void][LrWin]::GetWindowThreadProcessId($fg, [ref]$fgPid)",
+        "        if ($fgPid -ne $proc.Id) {",
+        "            $status = 'window-not-foreground (Lightroom could not be brought to the front - the session may be locked)'",
+        "        } else {",
+        "            $rect = New-Object LrRECT",
+        "            [void][LrWin]::GetWindowRect($hwnd, [ref]$rect)",
+        "            $w = $rect.Right - $rect.Left",
+        "            $h = $rect.Bottom - $rect.Top",
+        "            if ($w -le 0 -or $h -le 0) {",
+        "                $status = 'bad-rect'",
+        "            } else {",
+        "                $bmp = New-Object System.Drawing.Bitmap -ArgumentList $w, $h",
+        "                $g = [System.Drawing.Graphics]::FromImage($bmp)",
+        "                $g.CopyFromScreen($rect.Left, $rect.Top, 0, 0, (New-Object System.Drawing.Size -ArgumentList $w, $h))",
+        "                $g.Dispose()",
+        "                $bmp.Save($OutPath, [System.Drawing.Imaging.ImageFormat]::Jpeg)",
+        "                $bmp.Dispose()",
+        "            }",
+        "        }",
+        "    }",
+        "} catch {",
+        "    $status = 'error: ' + $_.Exception.Message",
+        "}",
+        "$status | Out-File -FilePath $ResultPath -Encoding ascii",
+    }, "\r\n")
+
+    local fh, openErr = io.open(scriptPath, "w")
+    if not fh then
+        return nil, "failed to write helper script: " .. tostring(openErr)
+    end
+    fh:write(script)
+    fh:close()
+
+    local command = 'powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "'
+        .. scriptPath
+        .. '" -ResultPath "' .. resultPath
+        .. '" -OutPath "' .. outPath
+        .. '" -WindowTitle "' .. WARN_SHOT_WINDOW_TITLE .. '"'
+    local execOk, execResult = pcall(function() return LrTasks.execute(command) end)
+
+    -- Give the filesystem a beat to flush the result file before reading it.
+    local resultContent = nil
+    for _ = 1, 10 do
+        local rf = io.open(resultPath, "r")
+        if rf then
+            resultContent = rf:read("*a") or ""
+            rf:close()
+            break
+        end
+        LrTasks.sleep(0.2)
+    end
+
+    pcall(function() LrFileUtils.delete(scriptPath) end)
+    pcall(function() LrFileUtils.delete(resultPath) end)
+
+    if resultContent == nil then
+        return nil, "screenshot helper produced no result (execute ok="
+            .. tostring(execOk) .. ", status " .. tostring(execResult) .. ")"
+    end
+
+    resultContent = resultContent:gsub("^%s+", ""):gsub("%s+$", "")
+    if resultContent == "ok" then
+        -- The helper writes the JPEG BEFORE it writes 'ok', so 'ok' means
+        -- the file is on disk; prune neighbours best-effort.
+        pcall(pruneWarnShots, dirOrErr)
+        return outPath, nil
+    end
+    return nil, "screenshot helper failed: " .. resultContent
+end
+
+-- Heuristic fallback advice per selection_type when detection produced no
+-- mask. It never claims to know Lightroom's exact banner text — that is
+-- what the screenshot is for; the vision client reads it and decides.
+local SUGGESTED_ACTIONS = {
+    subject = "no subject was detected: try selection_type 'background' or 'objects', or cover the region with add_local_adjustment",
+    sky = "no sky was detected: try selection_type 'subject' or 'background', or draw a linear gradient over the horizon with add_local_adjustment",
+    background = "no background was detected: try selection_type 'subject', or mask the surroundings manually with add_local_adjustment",
+    objects = "no objects were detected: try selection_type 'subject' or 'people', or use Select Objects in Lightroom's masking panel and then set_mask_adjustments with its mask_id",
+    people = "no person was detected: the person/body-part pick is UI-only — select the person in Lightroom's masking panel, then use set_mask_adjustments with its mask_id",
+    landscape = "no landscape regions were detected: try selection_type 'subject' or 'sky', or build the mask manually with add_local_adjustment",
+}
+local SUGGESTED_ACTION_SDK_ERROR = "createNewMask itself failed (see error): this Lightroom build may not support that selection type — create the mask in Lightroom's masking panel, or fall back to add_local_adjustment"
+local SUGGESTED_ACTION_GENERIC = "AI detection produced no mask: retry with a different selection_type, or create it manually with add_local_adjustment / Lightroom's masking panel"
+
+local function suggestedActionFor(selectionType, failureKind)
+    if failureKind == "sdk_error" then return SUGGESTED_ACTION_SDK_ERROR end
+    return SUGGESTED_ACTIONS[selectionType] or SUGGESTED_ACTION_GENERIC
 end
 
 -- MaskGroupBasedCorrections as a table; tolerates nil and odd shapes.
@@ -263,6 +509,11 @@ local function runMaskCreationBatch(catalog, photos, createMask, opts)
             local maskOk, maskOut = pcall(createMask)
             local maxAttempts = opts.retryMaxAttempts or MASK_CREATE_MAX_ATTEMPTS
             local retryDelay = opts.retryDelayS or MASK_CREATE_RETRY_DELAY_S
+            -- Early banner shot: ~40% into the retry window, when a
+            -- detection failure's banner is most likely still on screen
+            -- (fast types: attempt 3 ≈ t=3s; slow types: attempt 6 ≈ t=10s).
+            local captureAt = math.max(2, math.floor(maxAttempts * 0.4))
+            local earlyShot, earlyShotErr
             local maskId = maskOk and isUsableMaskId(maskOut) and tostring(maskOut) or nil
             local created = maskId ~= nil or maskCountNow() > beforeCount
             -- A clean nil usually means the mask was QUEUED, not that it
@@ -280,6 +531,10 @@ local function runMaskCreationBatch(catalog, photos, createMask, opts)
                     maskId = maskOk and isUsableMaskId(maskOut) and tostring(maskOut) or nil
                     created = maskId ~= nil or maskCountNow() > beforeCount
                 end
+                if not created and opts.captureWarningShot and attempt == captureAt then
+                    earlyShot, earlyShotErr =
+                        captureWindowScreenshot(entry.photo.filename, "early")
+                end
             end
             if created and maskId == nil then
                 local listOk, masks = pcall(function()
@@ -290,12 +545,56 @@ local function runMaskCreationBatch(catalog, photos, createMask, opts)
                 end
             end
             if not created then
-                entry.error = "createNewMask failed: " .. tostring(maskOut)
+                local shots = {}
+                if opts.captureWarningShot then
+                    -- Final shot at failure (catches banners that showed up
+                    -- after the early one), then everything the caller needs
+                    -- to choose a fallback.
+                    local finalShot, finalShotErr =
+                        captureWindowScreenshot(entry.photo.filename, "final")
+                    if earlyShot then table.insert(shots, earlyShot) end
+                    if finalShot then table.insert(shots, finalShot) end
+                    if #shots > 0 then
+                        entry.warning_screenshots = shots
+                        entry.warning_screenshot = shots[1]
+                    else
+                        entry.warning_capture_error = finalShotErr or earlyShotErr
+                            or "screenshot capture unavailable"
+                    end
+                    entry.failure_kind = maskOk and "detection_failed" or "sdk_error"
+                    entry.suggested_action =
+                        suggestedActionFor(opts.selectionType, entry.failure_kind)
+                end
+
+                if maskOk then
+                    -- Clean nil: no exception, but no mask either. Say how
+                    -- long we tried instead of the useless "failed: nil".
+                    local bannerNote = ""
+                    if opts.captureWarningShot then
+                        if #shots > 0 then
+                            bannerNote = "; the warning banner was captured (see warning_screenshots)"
+                        elseif entry.warning_capture_error then
+                            bannerNote = "; the warning banner could not be captured (see warning_capture_error)"
+                        end
+                    end
+                    local elapsedS = math.floor((maxAttempts - 1) * retryDelay)
+                    entry.error = string.format(
+                        "createNewMask produced no mask after %d attempts over ~%ds: no mask appeared in the Develop masking panel%s",
+                        maxAttempts, elapsedS, bannerNote)
+                else
+                    entry.error = "createNewMask failed: " .. tostring(maskOut)
+                end
                 if opts.errorNote then
                     entry.error = entry.error .. " - " .. opts.errorNote
                 end
                 failed = failed + 1
             else
+                if earlyShot then
+                    -- The photo ended up with a mask: the early shot was a
+                    -- bet on failure that did not pay off — drop it so no
+                    -- stale warning file survives for a healthy photo.
+                    pcall(function() LrFileUtils.delete(earlyShot) end)
+                end
                 entry.mask_id = maskId
                 entry.applied = {}
                 entry.adjustment_errors = {}
@@ -377,16 +676,17 @@ function AIMaskHandler.addAIMask(args)
     end
     LrTasks.sleep(SETTLE_AFTER_MODULE_SWITCH_S)
 
-    local maskOpts = {}
+    local maskOpts = {
+        captureWarningShot = true,
+        selectionType = selectionType,
+    }
     if SLOW_MASK_TYPES[selectionType] then
-        maskOpts = {
-            retryMaxAttempts = SLOW_MASK_MAX_ATTEMPTS,
-            retryDelayS = SLOW_MASK_RETRY_DELAY_S,
-            errorNote = "people/objects/landscape detection is slower and "
-                .. "the person/body-part pick is UI-only: if no mask was "
-                .. "created, create it manually in Lightroom and use "
-                .. "set_mask_adjustments with its mask_id",
-        }
+        maskOpts.retryMaxAttempts = SLOW_MASK_MAX_ATTEMPTS
+        maskOpts.retryDelayS = SLOW_MASK_RETRY_DELAY_S
+        maskOpts.errorNote = "people/objects/landscape detection is slower and "
+            .. "the person/body-part pick is UI-only: if no mask was "
+            .. "created, create it manually in Lightroom and use "
+            .. "set_mask_adjustments with its mask_id"
     end
 
     local results, succeeded, failed = runMaskCreationBatch(catalog, photos, function()
@@ -469,6 +769,23 @@ function AIMaskHandler.addAIMask(args)
     if failed > 0 then
         result.message = result.message
             .. ". Check each photo's 'error' entry; verify masks visually with get_photo_preview."
+        -- Surface the warning screenshots at the top level so the MCP
+        -- client can read Lightroom's own banner text and decide the
+        -- fallback (different selection_type, manual mask, or stop).
+        local shots = {}
+        for _, entry in ipairs(results) do
+            if type(entry.warning_screenshots) == "table" then
+                for _, path in ipairs(entry.warning_screenshots) do
+                    table.insert(shots, path)
+                end
+            end
+        end
+        if #shots > 0 then
+            result.warning_screenshots = shots
+            result.warning = string.format(
+                "AI detection produced no mask on %d photo(s); Lightroom's warning banner was captured in %d screenshot(s) attached to this response. Read the banner text in the image(s) to confirm the exact message, then decide per photo: retry add_ai_mask with another selection_type, fall back to add_local_adjustment, or follow the photo's suggested_action.",
+                failed, #shots)
+        end
     end
     return result
 end
