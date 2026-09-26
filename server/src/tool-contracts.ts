@@ -1696,7 +1696,7 @@ export const TOOL_CONTRACTS: ToolContract[] = [
     name: "remove_from_catalog",
     luaHandler: "HandlerOrganization.removeFromCatalog",
     description:
-      "Remove photos from the Lightroom catalog. DESTRUCTIVE (undo is limited) but files on disk are NOT deleted — only the catalog entries. Requires confirm=true; the handler verifies the ids no longer resolve afterwards.",
+      "Remove photos from the Lightroom catalog. DESTRUCTIVE (undo is limited) but files on disk are NOT deleted — only the catalog entries. The Lightroom SDK cannot remove catalog entries, so the handler selects the photos and drives Lightroom's own Remove command via the keyboard; keep Lightroom in the foreground and dismiss no other dialog. Windows-only. Requires confirm=true; the handler verifies the ids no longer resolve afterwards.",
     inputSchema: {
       type: "object",
       additionalProperties: false,

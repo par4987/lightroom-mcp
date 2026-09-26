@@ -27,6 +27,14 @@ local function setup(opts)
             flagAsReject = function() applyFlagToCurrentSelection(selectionCommands.reject) end,
             removeFlag = function() applyFlagToCurrentSelection(selectionCommands.none) end,
         },
+        LrTasks = {
+            -- The handler drives Lightroom's Remove command by sending keys to
+            -- its window; in the test env there is no window, so sleep is a
+            -- no-op and execute is never reached (the OS gate fires first).
+            sleep = function() end,
+        },
+        LrPathUtils = { getStandardFilePath = function() return "tmp" end, child = function(_, a, b) return a .. "/" .. b end },
+        LrFileUtils = { delete = function() end },
         LrLogger = helper.defaultLrLogger(),
     })
     package.loaded.HandlerOrganization = nil
@@ -193,6 +201,9 @@ describe("HandlerOrganization.setFlags", function()
                 flagAsReject = function() end,
                 removeFlag = function() end,
             },
+            LrTasks = { sleep = function() end },
+            LrPathUtils = { getStandardFilePath = function() return "tmp" end, child = function(_, a, b) return a .. "/" .. b end },
+            LrFileUtils = { delete = function() end },
             LrLogger = helper.defaultLrLogger(),
         })
         package.loaded.HandlerOrganization = nil
@@ -547,31 +558,37 @@ describe("HandlerOrganization.removeFromCatalog", function()
         assert.has_error(function()
             Handler.removeFromCatalog({ photo_ids = { "1" } })
         end, "remove_from_catalog is destructive: pass confirm=true to proceed")
-        assert.are.equal(0, catalog.getRemovedPhotoCount())
+        assert.are.equal(0, catalog.getSelectionCall() and 1 or 0)
     end)
 
-    it("removes the photos and verifies they no longer resolve", function()
+    it("errors honestly when it cannot drive Lightroom (no OS in test env)", function()
+        -- The SDK has no removePhoto: removal is driven by sending keys to the
+        -- Lightroom window, which is impossible in the test environment. The
+        -- handler must say so instead of claiming it removed anything.
         local p1 = helper.fakePhoto({ id = "1", fileName = "a.jpg" })
         local p2 = helper.fakePhoto({ id = "2", fileName = "b.jpg" })
         local catalog, Handler = setup({ photos = { p1, p2 } })
 
-        local r = Handler.removeFromCatalog({ photo_ids = { "1" }, confirm = true })
+        assert.has_error(function()
+            Handler.removeFromCatalog({ photo_ids = { "1", "2" }, confirm = true })
+        end, "remove_from_catalog could not drive Lightroom")
 
-        assert.is_true(r.success)
-        assert.are.equal(1, catalog.getRemovedPhotoCount())
-        assert.are.same({}, r.still_present)
+        -- Selection was still made (the precondition for driving the UI).
+        local sel = catalog.getSelectionCall()
+        assert.is_not_nil(sel)
+        assert.are.equal(2, #sel.photos)
+
+        -- Nothing was removed: both photos still resolve.
+        assert.is_not_nil(catalog.findPhotoByLocalIdentifier(catalog, "1"))
+        assert.is_not_nil(catalog.findPhotoByLocalIdentifier(catalog, "2"))
     end)
 
-    it("warns when a photo survives the removal", function()
+    it("fails when no photos match photo_ids, without touching Lightroom", function()
         local p1 = helper.fakePhoto({ id = "1", fileName = "a.jpg" })
-        local catalog, Handler = setup({ photos = { p1 } })
-        -- Make removal silently fail to verify honest reporting.
-        catalog.removePhoto = function() end
+        local _, Handler = setup({ photos = { p1 } })
 
-        local r = Handler.removeFromCatalog({ photo_ids = { "1" }, confirm = true })
-
-        assert.is_false(r.success)
-        assert.are.same({ "1" }, r.still_present)
-        assert.is_not_nil(r.warning)
+        assert.has_error(function()
+            Handler.removeFromCatalog({ photo_ids = { "999" }, confirm = true })
+        end, "No photos matched photo_ids")
     end)
 end)

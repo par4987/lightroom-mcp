@@ -1,5 +1,8 @@
 local LrApplication = import 'LrApplication'
 local LrSelection = import 'LrSelection'
+local LrTasks = import 'LrTasks'
+local LrPathUtils = import 'LrPathUtils'
+local LrFileUtils = import 'LrFileUtils'
 
 local PhotoLookup = require 'PhotoLookup'
 local PhotoFields = require 'PhotoFields'
@@ -728,11 +731,107 @@ end
 -- remove_from_catalog — destructive, confirm-gated
 -- =====================================================================
 --
--- catalog:removePhoto(photo) removes the photo from the catalog (files on
--- disk are NOT deleted). Destructive and hard to undo, so the tool
--- contract demands confirm=true and the handler re-checks it: an
--- accidental call errors instead of removing anything. Verification: the
--- ids must no longer resolve afterwards.
+-- The Lightroom SDK has NO catalog:removePhoto: it cannot remove a photo
+-- from the catalog programmatically (verified against the official SDK
+-- reference). The only programmatic path is to ask Lightroom itself: select
+-- the photos, send Delete, and confirm the "Remove from catalog" dialog.
+-- Same SendKeys + result-file protocol as HandlerAI.sendNativeDenoiseKeys.
+-- Windows-only; on a locked session the foreground gate fails honestly with
+-- 'window-not-foreground' rather than send keys to the wrong window.
+-- Destructive and hard to undo, so the tool contract demands confirm=true
+-- and the handler re-checks it. Verification: the ids must no longer resolve.
+
+local REMOVE_WINDOW_TITLE = "Lightroom"
+
+-- Returns { ok = true } or { ok = false, error = "..." }.
+local function sendRemoveKeys(photoCount)
+    if WIN_ENV == nil and MAC_ENV == nil then
+        -- Test environment (busted): no OS to automate. Report failure so the
+        -- caller's honest path reports it instead of pretending removal worked.
+        return { ok = false, error = "no OS automation in this environment (test)" }
+    end
+    if not WIN_ENV then
+        return { ok = false, error = "remove_from_catalog is Windows-only" }
+    end
+
+    local tempDir = LrPathUtils.getStandardFilePath("temp")
+    local scriptPath = LrPathUtils.child(tempDir, "lightroom-mcp-remove.ps1")
+    local resultPath = LrPathUtils.child(tempDir, "lightroom-mcp-remove.result")
+
+    pcall(function() LrFileUtils.delete(resultPath) end)
+
+    local script = table.concat({
+        "param(",
+        "    [string]$ResultPath,",
+        "    [string]$WindowTitle,",
+        "    [int]$KeyDelay",
+        ")",
+        "Add-Type -AssemblyName System.Windows.Forms",
+        "$shell = New-Object -ComObject WScript.Shell",
+        "$status = 'error: unknown'",
+        "try {",
+        "    $activated = $shell.AppActivate($WindowTitle)",
+        "    if (-not $activated) { $status = 'activate-failed'; $status | Out-File -FilePath $ResultPath -Encoding ascii; exit 2 }",
+        "    Start-Sleep -Milliseconds 400",
+        "    $shell.SendKeys('{DELETE}')",
+        "    Start-Sleep -Milliseconds $KeyDelay",
+        "    $shell.SendKeys('~')",
+        "    $status = 'keys-sent'",
+        "} catch {",
+        "    $status = 'error: ' + $_.Exception.Message",
+        "}",
+        "$status | Out-File -FilePath $ResultPath -Encoding ascii",
+    }, "\r\n")
+
+    local fh, openErr = io.open(scriptPath, "w")
+    if not fh then
+        return { ok = false, error = "failed to write helper script: " .. tostring(openErr) }
+    end
+    fh:write(script)
+    fh:close()
+
+    local command = 'powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "'
+        .. scriptPath
+        .. '" -ResultPath "' .. resultPath
+        .. '" -WindowTitle "' .. REMOVE_WINDOW_TITLE
+        .. '" -KeyDelay ' .. tostring(600)
+    local execOk, execResult = pcall(function() return LrTasks.execute(command) end)
+
+    local resultContent = nil
+    for _ = 1, 10 do
+        local rf = io.open(resultPath, "r")
+        if rf then
+            resultContent = rf:read("*a") or ""
+            rf:close()
+            break
+        end
+        LrTasks.sleep(0.2)
+    end
+
+    pcall(function() LrFileUtils.delete(scriptPath) end)
+    pcall(function() LrFileUtils.delete(resultPath) end)
+
+    if resultContent == nil then
+        return {
+            ok = false,
+            error = "remove helper produced no result (execute ok="
+                .. tostring(execOk) .. ", status " .. tostring(execResult) .. ")",
+        }
+    end
+
+    resultContent = resultContent:gsub("^%s+", ""):gsub("%s+$", "")
+    if resultContent == "keys-sent" then
+        return { ok = true }
+    end
+    if resultContent == "activate-failed" then
+        return {
+            ok = false,
+            error = "could not activate the Lightroom window ('"
+                .. REMOVE_WINDOW_TITLE .. "') - keep Lightroom in the foreground",
+        }
+    end
+    return { ok = false, error = "remove helper failed: " .. resultContent }
+end
 
 function OrganizationHandler.removeFromCatalog(args)
     if not args.photo_ids or #args.photo_ids == 0 then
@@ -746,14 +845,36 @@ function OrganizationHandler.removeFromCatalog(args)
 
     local catalog = LrApplication.activeCatalog()
 
-    catalog:withWriteAccessDo("Remove From Catalog", function()
+    -- Resolve first, outside any write gate, and bail if nothing matched so we
+    -- never send keys to Lightroom for a no-op.
+    local photos = {}
+    catalog:withReadAccessDo(function()
         local resolved = PhotoLookup.resolveMany(catalog, args.photo_ids)
         for _, entry in ipairs(resolved) do
             if entry.photo then
-                catalog:removePhoto(entry.photo)
+                table.insert(photos, entry.photo)
             end
         end
     end)
+
+    if #photos == 0 then
+        error("No photos matched photo_ids")
+    end
+
+    -- The SDK cannot remove catalog entries; drive Lightroom's own command.
+    -- setSelectedPhotos yields to the UI thread, so it must stay OUTSIDE any
+    -- catalog access gate (same rule as flag_photo, issues #134/#124).
+    catalog:setSelectedPhotos(photos[1], photos)
+
+    local sent = sendRemoveKeys(#photos)
+    if not sent.ok then
+        error("remove_from_catalog could not drive Lightroom: " .. sent.error
+            .. ". The photos were NOT removed. Select them in Lightroom and press Delete manually, "
+            .. "or retry with Lightroom in the foreground.")
+    end
+
+    -- Give the catalog a beat to process the removal before re-resolving.
+    LrTasks.sleep(1)
 
     -- Verify: every id that resolved before must now be gone.
     local stillPresent = {}
@@ -767,14 +888,14 @@ function OrganizationHandler.removeFromCatalog(args)
     end)
 
     Log.info(string.format("removeFromCatalog: %d removed, %d still present",
-        #args.photo_ids - #stillPresent, #stillPresent))
+        #photos - #stillPresent, #stillPresent))
 
     local result = {
         success = #stillPresent == 0,
-        requested = #args.photo_ids,
+        requested = #photos,
         still_present = stillPresent,
         message = string.format("Removed %d photo(s) from the catalog",
-            #args.photo_ids - #stillPresent),
+            #photos - #stillPresent),
     }
     if #stillPresent > 0 then
         result.warning = "Some photos are still in the catalog: "

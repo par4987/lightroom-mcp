@@ -413,12 +413,6 @@ function M.fakeCatalog(opts)
         end,
         getViewFilterCallCount = function() return viewFilterCalls end,
         getViewFilterHistory = function() return viewFilterHistory end,
-        removePhoto = function(_, photo)
-            removedPhotos = removedPhotos + 1
-            for i, p in ipairs(photos) do
-                if p == photo then table.remove(photos, i) return end
-            end
-        end,
         getRemovedPhotoCount = function() return removedPhotos end,
         withReadAccessDo = function(_, fn)
             readAccessCount = readAccessCount + 1
