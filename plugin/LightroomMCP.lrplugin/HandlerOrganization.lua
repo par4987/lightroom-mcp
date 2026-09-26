@@ -741,10 +741,14 @@ end
 -- Activation details matter: AppActivate("Lightroom") by TITLE fails even
 -- with the window visible and enabled, so the helper activates by PID after
 -- a synthetic keystroke earns the focus-change right, then verifies the
--- foreground before sending anything. Keys verified live: plain {DELETE}
--- does nothing in Lightroom's Library grid; Ctrl+Backspace is the actual
--- "Remove Photos" shortcut, and 'g' first puts keyboard focus in the grid so
--- the shortcut acts on the selection instead of a panel.
+-- foreground before sending anything. Key findings: 'g' switches to Library
+-- Grid view and puts keyboard focus in the grid (a SDK selection alone does
+-- not move the focus, so the key lands on whatever panel had it). In the
+-- grid, plain Backspace is "Remove Selected Photo" and opens the Confirmar
+-- dialog whose default button is "Remove from Lightroom" (catalog only;
+-- the file on disk is kept). Ctrl+Backspace is a DIFFERENT command,
+-- "Delete Rejected Photos", which acts on photos flagged Rejected rather
+-- than on the selection - wrong tool for this job.
 -- Destructive and hard to undo, so the tool contract demands confirm=true
 -- and the handler re-checks it. Verification: the ids must no longer resolve.
 
@@ -772,11 +776,13 @@ local function sendRemoveKeys(photoCount)
     -- otherwise denies a background process. The foreground is then verified
     -- before any removal key is sent, so keys never go to the wrong window.
     -- Key findings: 'g' switches to Library Grid view and puts keyboard focus
-    -- in the grid (a SDK selection alone does not move the focus, so Delete
-    -- hits whatever panel had it). Plain {DELETE} does NOT open the Remove
-    -- dialog in the grid; Ctrl+Backspace is Lightroom's real "Remove Photos"
-    -- shortcut. Enter confirms the dialog's default button, which is
-    -- "Remove from Lightroom" (remove from catalog, not delete from disk).
+    -- in the grid (a SDK selection alone does not move the focus, so the key
+    -- hits whatever panel had it). In the grid, plain Backspace is "Remove
+    -- Selected Photo" and opens the Confirmar dialog whose default button is
+    -- "Remove from Lightroom" (catalog only; the file on disk is kept).
+    -- Ctrl+Backspace is a DIFFERENT command, "Delete Rejected Photos", which
+    -- acts on photos flagged Rejected rather than on the selection - it
+    -- would remove the wrong photos, so it must NOT be used here.
     local script = table.concat({
         "param(",
         "    [string]$ResultPath,",
@@ -805,9 +811,10 @@ local function sendRemoveKeys(photoCount)
         "    $fgPid = 0",
         "    [void][LrWinFocus]::GetWindowThreadProcessId($fg, [ref]$fgPid)",
         "    if ($fgPid -ne $proc.Id) { $status = 'window-not-foreground (Lightroom could not be brought to the front - the session may be locked)'; $status | Out-File -FilePath $ResultPath -Encoding ascii; exit 2 }",
+    --     if ($fgPid -ne $proc.Id) { $status = 'window-not-foreground (Lightroom could not be brought to the front - the session may be locked)'; $status | Out-File -FilePath $ResultPath -Encoding ascii; exit 2 }",
         "    $shell.SendKeys('g')",
         "    Start-Sleep -Milliseconds 500",
-        "    $shell.SendKeys('^{BACKSPACE}')",
+        "    $shell.SendKeys('{BACKSPACE}')",
         "    Start-Sleep -Milliseconds $KeyDelay",
         "    $shell.SendKeys('~')",
         "    $status = 'keys-sent'",
