@@ -591,4 +591,26 @@ describe("HandlerOrganization.removeFromCatalog", function()
             Handler.removeFromCatalog({ photo_ids = { "999" }, confirm = true })
         end, "No photos matched photo_ids")
     end)
+
+    it("sends Backspace (remove selected), never Ctrl+Backspace (delete rejected)", function()
+        -- Regression guard for a destructive bug: Ctrl+Backspace is NOT
+        -- "remove the selection", it is Lightroom's "Delete Rejected Photos",
+        -- which acts on photos flagged Rejected and would remove photos the
+        -- caller never asked for (shipped as c33857e, caught live in 50590cd).
+        -- Plain Backspace in the grid is "Remove Selected Photo". The sequence
+        -- is spliced into the helper script from this table, so locking it here
+        -- locks the actual keys Lightroom receives.
+        local _, Handler = setup({})
+        assert.is_not_nil(Handler.REMOVE_KEYS)
+        assert.is_true(#Handler.REMOVE_KEYS >= 3)
+
+        local joined = table.concat(Handler.REMOVE_KEYS, "\n")
+        assert.is_not_nil(string.find(joined, "{BACKSPACE}", 1, true))
+        assert.is_nil(string.find(joined, "%^%{?BACKSPACE")) -- no Ctrl+Backspace
+
+        -- 'g' must come first: without grid focus the removal key hits whatever
+        -- panel held the keyboard focus and silently does nothing.
+        assert.is_not_nil(string.find(Handler.REMOVE_KEYS[1], "SendKeys%('g'%)", 1))
+        assert.is_nil(string.find(Handler.REMOVE_KEYS[1], "BACKSPACE"))
+    end)
 end)

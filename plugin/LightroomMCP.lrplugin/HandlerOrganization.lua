@@ -752,6 +752,31 @@ end
 -- Destructive and hard to undo, so the tool contract demands confirm=true
 -- and the handler re-checks it. Verification: the ids must no longer resolve.
 
+-- The keystrokes that drive Lightroom's own "Remove Selected Photo". These are
+-- spliced into the PowerShell helper below, and live at module level instead of
+-- buried in the script string so HandlerOrganization_spec can lock them: sending
+-- the wrong key here is silent, and destructive to the wrong photos.
+--
+-- 'g'            Library Grid view. An SDK selection does NOT move keyboard
+--                focus, so without this the removal key lands on whatever panel
+--                had it and does nothing.
+-- '{BACKSPACE}'  "Remove Selected Photo" - opens the Confirmar dialog whose
+--                focused default button is "Remove from Lightroom" (catalog
+--                only; the file on disk survives).
+-- '~'            Enter, confirming that default button.
+--
+-- Deliberately NOT Ctrl+Backspace: that is a DIFFERENT command, "Delete Rejected
+-- Photos", which acts on photos flagged Rejected rather than on the selection.
+-- It would remove photos the caller never asked for (regression shipped as
+-- c33857e, caught by a live E2E, fixed in 50590cd).
+OrganizationHandler.REMOVE_KEYS = {
+    "    $shell.SendKeys('g')",
+    "    Start-Sleep -Milliseconds 500",
+    "    $shell.SendKeys('{BACKSPACE}')",
+    "    Start-Sleep -Milliseconds $KeyDelay",
+    "    $shell.SendKeys('~')",
+}
+
 -- Returns { ok = true } or { ok = false, error = "..." }.
 local function sendRemoveKeys(photoCount)
     if WIN_ENV == nil and MAC_ENV == nil then
@@ -811,12 +836,8 @@ local function sendRemoveKeys(photoCount)
         "    $fgPid = 0",
         "    [void][LrWinFocus]::GetWindowThreadProcessId($fg, [ref]$fgPid)",
         "    if ($fgPid -ne $proc.Id) { $status = 'window-not-foreground (Lightroom could not be brought to the front - the session may be locked)'; $status | Out-File -FilePath $ResultPath -Encoding ascii; exit 2 }",
-    --     if ($fgPid -ne $proc.Id) { $status = 'window-not-foreground (Lightroom could not be brought to the front - the session may be locked)'; $status | Out-File -FilePath $ResultPath -Encoding ascii; exit 2 }",
-        "    $shell.SendKeys('g')",
-        "    Start-Sleep -Milliseconds 500",
-        "    $shell.SendKeys('{BACKSPACE}')",
-        "    Start-Sleep -Milliseconds $KeyDelay",
-        "    $shell.SendKeys('~')",
+    }, "\r\n")
+        .. "\r\n" .. table.concat(OrganizationHandler.REMOVE_KEYS, "\r\n") .. "\r\n" .. table.concat({
         "    $status = 'keys-sent'",
         "} catch {",
         "    $status = 'error: ' + $_.Exception.Message",
