@@ -738,10 +738,12 @@ end
 -- Same SendKeys + result-file protocol as HandlerAI.sendNativeDenoiseKeys.
 -- Windows-only; on a locked session the foreground gate fails honestly with
 -- 'window-not-foreground' rather than send keys to the wrong window.
+-- Activation details matter: AppActivate("Lightroom") by TITLE fails even
+-- with the window visible and enabled, so the helper activates by PID after
+-- a synthetic keystroke earns the focus-change right, then verifies the
+-- foreground before sending anything.
 -- Destructive and hard to undo, so the tool contract demands confirm=true
 -- and the handler re-checks it. Verification: the ids must no longer resolve.
-
-local REMOVE_WINDOW_TITLE = "Lightroom"
 
 -- Returns { ok = true } or { ok = false, error = "..." }.
 local function sendRemoveKeys(photoCount)
@@ -760,19 +762,40 @@ local function sendRemoveKeys(photoCount)
 
     pcall(function() LrFileUtils.delete(resultPath) end)
 
+    -- Activation findings (verified live against Lightroom Classic on Windows):
+    -- AppActivate("Lightroom") by TITLE returns False even with the window
+    -- visible, enabled and unminimized; AppActivate by PID works, but only
+    -- after a synthetic keystroke, which earns the focus-change right the OS
+    -- otherwise denies a background process. The foreground is then verified
+    -- before any removal key is sent, so keys never go to the wrong window.
     local script = table.concat({
         "param(",
         "    [string]$ResultPath,",
-        "    [string]$WindowTitle,",
         "    [int]$KeyDelay",
         ")",
         "Add-Type -AssemblyName System.Windows.Forms",
+        "Add-Type @\"",
+        "using System;",
+        "using System.Runtime.InteropServices;",
+        "public class LrWinFocus {",
+        "    [DllImport(\"user32.dll\")] public static extern IntPtr GetForegroundWindow();",
+        "    [DllImport(\"user32.dll\")] public static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);",
+        "}",
+        "\"@",
         "$shell = New-Object -ComObject WScript.Shell",
         "$status = 'error: unknown'",
         "try {",
-        "    $activated = $shell.AppActivate($WindowTitle)",
+        "    $proc = Get-Process -Name Lightroom -ErrorAction Stop | Where-Object { $_.MainWindowHandle -ne 0 } | Select-Object -First 1",
+        "    if (-not $proc) { $status = 'no-window'; $status | Out-File -FilePath $ResultPath -Encoding ascii; exit 2 }",
+        "    [System.Windows.Forms.SendKeys]::SendWait('{ESC}')",
+        "    Start-Sleep -Milliseconds 200",
+        "    $activated = $shell.AppActivate($proc.Id)",
         "    if (-not $activated) { $status = 'activate-failed'; $status | Out-File -FilePath $ResultPath -Encoding ascii; exit 2 }",
         "    Start-Sleep -Milliseconds 400",
+        "    $fg = [LrWinFocus]::GetForegroundWindow()",
+        "    $fgPid = 0",
+        "    [void][LrWinFocus]::GetWindowThreadProcessId($fg, [ref]$fgPid)",
+        "    if ($fgPid -ne $proc.Id) { $status = 'window-not-foreground (Lightroom could not be brought to the front - the session may be locked)'; $status | Out-File -FilePath $ResultPath -Encoding ascii; exit 2 }",
         "    $shell.SendKeys('{DELETE}')",
         "    Start-Sleep -Milliseconds $KeyDelay",
         "    $shell.SendKeys('~')",
@@ -793,7 +816,6 @@ local function sendRemoveKeys(photoCount)
     local command = 'powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "'
         .. scriptPath
         .. '" -ResultPath "' .. resultPath
-        .. '" -WindowTitle "' .. REMOVE_WINDOW_TITLE
         .. '" -KeyDelay ' .. tostring(600)
     local execOk, execResult = pcall(function() return LrTasks.execute(command) end)
 
@@ -823,11 +845,10 @@ local function sendRemoveKeys(photoCount)
     if resultContent == "keys-sent" then
         return { ok = true }
     end
-    if resultContent == "activate-failed" then
+    if resultContent == "activate-failed" or resultContent == "no-window" then
         return {
             ok = false,
-            error = "could not activate the Lightroom window ('"
-                .. REMOVE_WINDOW_TITLE .. "') - keep Lightroom in the foreground",
+            error = "could not activate the Lightroom window - keep Lightroom in the foreground",
         }
     end
     return { ok = false, error = "remove helper failed: " .. resultContent }
