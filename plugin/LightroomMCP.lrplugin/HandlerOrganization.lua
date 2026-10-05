@@ -339,8 +339,14 @@ end
 -- Virtual copies
 -- =====================================================================
 --
--- photo:createVirtualCopy() inside a write gate returns the new LrPhoto.
--- The copies are stacked with their source and share its develop settings.
+-- photo:createVirtualCopy() was removed from the Lightroom SDK. The
+-- supported way is catalog:createVirtualCopies(), which clones the
+-- current selection, so we select each source photo first and then ask
+-- for the copies. setSelectedPhotos and createVirtualCopies both yield
+-- to the UI thread, so they must stay OUTSIDE any catalog write gate
+-- (same rule as flag_photo / remove_from_catalog, issues #134/#124).
+-- This handler runs inside the LrTasks.startAsyncTask wrapper that
+-- dispatchAction already provides.
 
 function OrganizationHandler.createVirtualCopies(args)
     if not args.photo_ids or #args.photo_ids == 0 then
@@ -355,25 +361,28 @@ function OrganizationHandler.createVirtualCopies(args)
     local catalog = LrApplication.activeCatalog()
     local created = {}
 
-    catalog:withWriteAccessDo("Create Virtual Copies", function()
-        local resolved = PhotoLookup.resolveMany(catalog, args.photo_ids)
-        for _, entry in ipairs(resolved) do
-            local photo = entry.photo
-            if photo then
-                for _ = 1, count do
-                    local newPhoto = photo:createVirtualCopy()
-                    if newPhoto then
-                        table.insert(created, {
-                            source_id = photo.localIdentifier,
-                            id = newPhoto.localIdentifier,
-                            path = newPhoto:getRawMetadata('path'),
-                            filename = newPhoto:getFormattedMetadata('fileName'),
-                        })
-                    end
+    local resolved = PhotoLookup.resolveMany(catalog, args.photo_ids)
+    for _, entry in ipairs(resolved) do
+        local photo = entry.photo
+        if photo then
+            for _ = 1, count do
+                -- createVirtualCopies() clones the current selection and
+                -- then selects the copies, so re-select the source photo
+                -- on every iteration or we would copy the copies.
+                catalog:setSelectedPhotos(photo, { photo })
+                local copies = catalog:createVirtualCopies()
+                if copies and #copies > 0 then
+                    local newPhoto = copies[1]
+                    table.insert(created, {
+                        source_id = photo.localIdentifier,
+                        id = newPhoto.localIdentifier,
+                        path = newPhoto:getRawMetadata('path'),
+                        filename = newPhoto:getFormattedMetadata('fileName'),
+                    })
                 end
             end
         end
-    end)
+    end
 
     if #created == 0 then
         error("No virtual copies were created (check that photo_ids matched photos)")

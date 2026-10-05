@@ -114,6 +114,11 @@ const ACTION_TIMEOUTS_MS: Record<string, number> = {
   select_photos: 60_000,
   rotate_photo: 60_000,
   remove_from_catalog: 60_000,
+  // Virtual copies re-select the source photo and yield to the Lightroom UI
+  // thread once per copy (catalog:setSelectedPhotos + createVirtualCopies),
+  // measured 26-36s for 7-8 copies; the 30s default reported a spurious
+  // timeout while the copies were created successfully moments later.
+  create_virtual_copies: 120_000,
 };
 
 const here = path.dirname(fileURLToPath(import.meta.url));
