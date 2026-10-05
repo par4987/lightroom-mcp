@@ -1,8 +1,4 @@
-import { Server } from "@modelcontextprotocol/sdk/server/index.js";
-import {
-  CallToolRequestSchema,
-  ListToolsRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js";
+import { Server } from "@modelcontextprotocol/server";
 import type { Dispatcher } from "./dispatcher.js";
 import { createCallToolHandler } from "./tool-handler.js";
 import { listToolsHandler, TOOL_FILTER_ENV_VAR } from "./list-tools-handler.js";
@@ -25,12 +21,14 @@ export function createMcpServer(deps: ServerDeps): Server {
 
   const toolFilter = deps.toolFilter ?? process.env[TOOL_FILTER_ENV_VAR];
 
-  server.setRequestHandler(ListToolsRequestSchema, async () =>
+  // v2 registers handlers by method string instead of a request schema.
+  // The literal keeps request.params typed through RequestTypeMap.
+  server.setRequestHandler("tools/list", async () =>
     listToolsHandler(toolFilter, (m) => console.error(m)),
   );
 
   const callTool = createCallToolHandler(deps);
-  server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler("tools/call", async (request) => {
     const { name, arguments: args } = request.params;
     return callTool(name, args ?? {});
   });

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { Client } from '@modelcontextprotocol/client';
+import { StdioClientTransport } from '@modelcontextprotocol/client/stdio';
 
 async function main() {
   console.error('Connecting to Lightroom MCP server...');
@@ -14,16 +14,12 @@ async function main() {
   const client = new Client({
     name: 'lightroom-metadata-client',
     version: '1.0.0'
-  }, {
-    capabilities: {}
   });
 
+  // v2 runs the initialize handshake inside connect(); there is no separate
+  // initialize() call any more.
   await client.connect(transport);
-  console.error('Connected!');
-
-  // Initialize
-  await client.initialize();
-  console.error('Initialized!');
+  console.error('Connected and initialized!');
 
   // Get selected photos
   console.error('\n--- Getting selected photos ---');

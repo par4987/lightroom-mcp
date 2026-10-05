@@ -1,5 +1,17 @@
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
-import { TOOL_CONTRACTS, annotationsFor, outputSchemaFor } from "./tool-contracts.js";
+import type { Tool } from "@modelcontextprotocol/server";
+import { TOOL_CONTRACTS, annotationsFor, outputSchemaFor, type JsonSchema } from "./tool-contracts.js";
+
+/**
+ * `Tool["inputSchema"]` inlines the SDK's recursive JSONValue union, and
+ * TypeScript expands such a type eagerly at this position. A schema that uses
+ * `oneOf`/`anyOf`/`not` then fails to typecheck even though those are valid
+ * JSONValue shapes (an object whose value is an array), so the friction is the
+ * compiler, not the contract. The cast is confined to this one boundary: what
+ * reaches the client is the authored JSON Schema, byte for byte.
+ */
+function asInputSchema(schema: JsonSchema): Tool["inputSchema"] {
+  return schema as Tool["inputSchema"];
+}
 
 /**
  * `annotations` is what tells a client which tools merely read and which can
@@ -13,7 +25,7 @@ export const TOOL_DEFINITIONS: Tool[] = TOOL_CONTRACTS.map(
     const tool: Tool = {
       name,
       description,
-      inputSchema,
+      inputSchema: asInputSchema(inputSchema),
       annotations: annotations ?? annotationsFor(name),
     };
     // Only set the key when there is a schema: an explicit `undefined` would

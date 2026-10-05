@@ -1,6 +1,6 @@
 {
   "name": "@pired/lightroom-mcp",
-  "version": "3.2.4",
+  "version": "3.2.5",
   "description": "MCP server for Adobe Lightroom Classic with hybrid AI Denoise, spot removal, local + AI + range masks, tone curves, Auto tone/WB, inline JPEG previews, smart collections and watermarking. Fork of Automaat/lightroom-mcp.",
   "type": "module",
   "main": "dist/index.js",
@@ -21,6 +21,7 @@
     "lint": "eslint src tests",
     "watch": "tsc --watch",
     "test": "jest",
+    "test:wire": "npm run build && node scripts/verify-wire-v2.mjs",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage --runInBand",
     "prepare": "npm run build",
@@ -53,13 +54,14 @@
     "url": "https://github.com/par4987/lightroom-mcp/issues"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.30.1",
+    "@modelcontextprotocol/server": "^2.3.0",
     "ajv": "^8.20.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/client": "^2.3.1",
     "@types/jest": "^30.0.0",
     "@types/node": "^26.5.1",
     "@typescript/native": "npm:typescript@^7.0.2",
@@ -72,6 +74,7 @@
   },
   "overrides": {
     "proxy-addr": "2.0.8",
-    "fast-uri": "^3.1.8"
+    "fast-uri": "^3.1.8",
+    "brace-expansion": "^5.0.12"
   }
 }

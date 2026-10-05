@@ -1,6 +1,14 @@
-import type { Tool } from "@modelcontextprotocol/sdk/types.js";
+import type { Tool } from "@modelcontextprotocol/server";
 
-type InputSchema = Tool["inputSchema"];
+/**
+ * A JSON Schema document, held as the authored form. v2's `Tool["inputSchema"]`
+ * inlines the SDK's recursive JSONValue union, which TypeScript expands eagerly
+ * and rejects our `oneOf`/`anyOf`/`not` on; see asInputSchema() in
+ * list-tools-handler.ts, where the boundary cast lives.
+ */
+export type JsonSchema = Record<string, unknown>;
+
+type InputSchema = JsonSchema;
 
 export interface ToolContract {
   name: string;

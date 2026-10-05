@@ -14,7 +14,7 @@
 | --- | --- |
 | Sistema operativo | **Windows 10/11** (el denoise nativo usa automatización de teclado de Windows) |
 | Adobe Lightroom Classic | 13.x o superior recomendado (AI Denoise 12.3+; **máscaras de IA** 12.4+) |
-| Node.js | 18 o superior (para correr el servidor MCP) |
+| Node.js | 20 o superior (para correr el servidor MCP; el SDK v2 de MCP lo exige) |
 | Cliente MCP | Claude Desktop (recomendado), Claude Code, Cursor, Windsurf, VS Code, **harness de DeepSeek incluido**… |
 
 ## Qué tiene de nuevo este fork

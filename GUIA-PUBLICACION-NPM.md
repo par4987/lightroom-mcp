@@ -27,7 +27,8 @@ pertenecer a **tu** cuenta. Esta guía cubre todo lo demás.
    > (pedímelo y lo ajusto en 2 minutos).
 2. **Habilitá 2FA** en Account → Security (recomendado; npm puede requerirlo
    para publicar).
-3. **Node 18 o superior** instalado (recomendado 24 LTS).
+3. **Node 20 o superior** instalado (recomendado 24 LTS). El SDK v2 de MCP
+   requiere Node 20 como mínimo.
 
 ## 2. Publicar (≈ 2 minutos)
 

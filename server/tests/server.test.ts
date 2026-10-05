@@ -1,6 +1,5 @@
 import { describe, it, expect, afterEach } from '@jest/globals';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
+import { Client, InMemoryTransport } from '@modelcontextprotocol/client';
 import { createMcpServer } from '../src/create-server.js';
 import type { PluginResponse } from '../src/dispatcher.js';
 

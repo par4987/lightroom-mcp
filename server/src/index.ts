@@ -3,7 +3,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { StdioServerTransport } from "@modelcontextprotocol/server/stdio";
 import { PluginSocket } from "./plugin-socket.js";
 import { Dispatcher } from "./dispatcher.js";
 import { readToken, tokenFilePath } from "./token.js";
