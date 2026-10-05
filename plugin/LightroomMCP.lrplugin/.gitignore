@@ -1,0 +1,7 @@
+# Editor and tool backups of Lua sources. Three of these were committed by the
+# initial import and sync-bundle.mjs shipped them inside the npm package;
+# scripts/sync-bundle.mjs now filters them out of dist as well.
+*.bak
+*.orig
+*.rej
+*.swp

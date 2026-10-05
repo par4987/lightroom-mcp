@@ -16,10 +16,14 @@ const serverDir = path.resolve(here, "..");
 const repoRoot = path.resolve(serverDir, "..");
 const dist = path.join(serverDir, "dist");
 
+/** Editor and build backups: never part of the shipped plugin. */
+const EXCLUDED = /\.(bak|orig|rej|swp)$/;
+
 function copyDir(src, dest) {
   fs.rmSync(dest, { recursive: true, force: true });
   fs.mkdirSync(dest, { recursive: true });
   for (const entry of fs.readdirSync(src, { withFileTypes: true })) {
+    if (EXCLUDED.test(entry.name)) continue;
     const s = path.join(src, entry.name);
     const d = path.join(dest, entry.name);
     if (entry.isDirectory()) copyDir(s, d);
