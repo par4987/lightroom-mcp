@@ -596,7 +596,19 @@ startServer = function(opts)
                     if shutdownRequested() then return end
                     local request = consumeMessage(message)
                     if request then
-                        LrTasks.startAsyncTask(function()
+                        -- MUST be postAsyncTaskWithContext, not startAsyncTask.
+                        -- onMessage is a C callback from LrSocket, and a bare
+                        -- startAsyncTask inherits THAT function context, so the
+                        -- handler body stays inside the C/metamethod frame.
+                        -- Anything that needs to yield from there is rejected
+                        -- by Lightroom with "Yielding is not allowed within a C
+                        -- or metamethod call" - which is exactly what
+                        -- LrTasks.execute does inside sendRemoveKeys, so
+                        -- remove_from_catalog reported failure while the keys
+                        -- went out anyway. postAsyncTaskWithContext gives the
+                        -- task a fresh context that may yield. Same rule, same
+                        -- reason, as the auto-start in PluginInit.lua (#128).
+                        LrFunctionContext.postAsyncTaskWithContext("LightroomMCPDispatch", function()
                             dispatchAction(request)
                         end)
                     end

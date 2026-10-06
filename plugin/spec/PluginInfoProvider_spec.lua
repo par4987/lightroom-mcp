@@ -31,17 +31,33 @@ local function installStubs(prefs, asyncTasks, opts)
     helper.installImport({
         LrTasks = {
             startAsyncTask = function(fn)
+                -- A bare startAsyncTask runs the body in the CALLER's function
+                -- context. Production callers here are LrSocket C callbacks, so
+                -- mark the body as non-yieldable and let LrTasks.execute below
+                -- reproduce what Lightroom does from a C frame.
+                local previous = _G.LightroomMCP_InCContext
+                _G.LightroomMCP_InCContext = true
                 if asyncTasks then
                     table.insert(asyncTasks, fn)
                 else
                     fn()
                 end
+                _G.LightroomMCP_InCContext = previous
             end,
             sleep = function()
                 if opts.stopLoopOnSleep and _G.LightroomMCP_State then
                     _G.LightroomMCP_State.running = false
                 end
                 if opts.onSleep then opts.onSleep(_G.LightroomMCP_State) end
+            end,
+            -- Lightroom refuses to yield out of a C or metamethod call. This is
+            -- the exact refusal remove_from_catalog hit, because the helper that
+            -- replays the Delete keys runs LrTasks.execute.
+            execute = function()
+                if _G.LightroomMCP_InCContext then
+                    error("Yielding is not allowed within a C or metamethod call")
+                end
+                return true
             end,
             pcall = pcall,
         },
@@ -51,12 +67,16 @@ local function installStubs(prefs, asyncTasks, opts)
             postAsyncTaskWithContext = function(name, fn)
                 if opts.tasksStarted then table.insert(opts.tasksStarted, name) end
                 if not opts.runTask then return end
+                -- A fresh function context is yieldable, whatever called us.
+                local previous = _G.LightroomMCP_InCContext
+                _G.LightroomMCP_InCContext = false
                 local context = {
                     addCleanupHandler = function(_, handler)
                         if opts.cleanups then table.insert(opts.cleanups, handler) end
                     end,
                 }
                 fn(context)
+                _G.LightroomMCP_InCContext = previous
             end,
         },
         LrSocket = {
@@ -1003,4 +1023,62 @@ describe("cooperative shutdown at Lightroom quit (issue 195)", function()
         assert.is_not_nil(_G.LightroomMCP_State.token)
     end)
 
+end)
+
+describe("dispatch runs in a yieldable context", function()
+    -- remove_from_catalog drives Lightroom's own Remove command by writing a
+    -- PowerShell helper and running it through LrTasks.execute. onMessage is a
+    -- C callback, and a bare LrTasks.startAsyncTask inherits that C frame, so
+    -- Lightroom refuses the yield and the handler reported
+    -- "Yielding is not allowed within a C or metamethod call" - while the keys
+    -- had already gone out, leaving a tool that fails loudly and deletes anyway.
+    -- The dispatch must therefore run via LrFunctionContext.postAsyncTaskWithContext.
+    local function request(state, action)
+        return '{"id":1,"action":"' .. action .. '","hello":"' .. state.token .. '"}'
+    end
+
+    local function dispatchRemoveFromCatalog()
+        local binds, sends = {}, {}
+        installStubs(nil, nil, {
+            runTask = true, stopLoopOnSleep = true, cleanups = {},
+            capturedBinds = binds, sends = sends,
+        })
+        package.loaded.JSON = nil
+        package.loaded.HandlerOrganization = {
+            removeFromCatalog = function()
+                local LrTasks = import 'LrTasks'
+                LrTasks.execute('powershell -File remove-helper.ps1')
+                return { success = true }
+            end,
+        }
+        local mod = loadInfoProvider()
+        mod.startServer()
+        local state = _G.LightroomMCP_State
+        state.sendConnected = true
+        binds[1].onMessage(nil, request(state, 'remove_from_catalog'))
+        return sends
+    end
+
+    it("lets a handler run LrTasks.execute without hitting the C-frame refusal", function()
+        local sends = dispatchRemoveFromCatalog()
+
+        assert.is_not_nil(sends[1])
+        assert.is_not_nil(sends[1]:find('"success"', 1, true))
+        assert.is_nil(sends[1]:find('Yielding is not allowed', 1, true))
+    end)
+
+    it("queues the dispatch through postAsyncTaskWithContext, not startAsyncTask", function()
+        local binds, asyncTasks, tasksStarted = {}, {}, {}
+        installStubs(nil, asyncTasks, {
+            runTask = true, stopLoopOnSleep = true, cleanups = {},
+            capturedBinds = binds, tasksStarted = tasksStarted,
+        })
+        package.loaded.JSON = nil
+        local mod = loadInfoProvider()
+        mod.startServer()
+
+        binds[1].onMessage(nil, request(_G.LightroomMCP_State, 'ping'))
+
+        assert.are.equal("LightroomMCPDispatch", tasksStarted[#tasksStarted])
+    end)
 end)
