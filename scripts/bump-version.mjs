@@ -78,6 +78,44 @@ const targets = [
     },
   },
   {
+    name: ".claude-plugin/plugin.json",
+    file: p(".claude-plugin", "plugin.json"),
+    read() {
+      return readJson(this.file).version;
+    },
+    write(v) {
+      const j = readJson(this.file);
+      j.version = v;
+      fs.writeFileSync(this.file, JSON.stringify(j, null, 2) + "\n");
+    },
+  },
+  {
+    // The plugin pins the npm version it launches. Left behind, a release would
+    // ship a Claude Code plugin that silently runs the previous server, and the
+    // mismatch would only surface as "my fix isn't there" in someone else's
+    // session. The pin lives in an args array, so it is read back out of the
+    // package specifier rather than a plain field.
+    name: ".mcp.json (pinned package)",
+    file: p(".mcp.json"),
+    read() {
+      const j = readJson(this.file);
+      for (const spec of j.mcpServers?.lightroom?.args ?? []) {
+        const m = spec.match(/^@pired\/lightroom-mcp@(.+)$/);
+        if (m) return m[1];
+      }
+      return null;
+    },
+    write(v) {
+      const j = readJson(this.file);
+      const server = j.mcpServers?.lightroom;
+      if (!server) throw new Error(".mcp.json: no mcpServers.lightroom entry to pin");
+      const i = (server.args ?? []).findIndex((a) => String(a).startsWith("@pired/lightroom-mcp@"));
+      if (i === -1) throw new Error(".mcp.json: no pinned @pired/lightroom-mcp arg found");
+      server.args[i] = `@pired/lightroom-mcp@${v}`;
+      fs.writeFileSync(this.file, JSON.stringify(j, null, 2) + "\n");
+    },
+  },
+  {
     name: "plugin/LightroomMCP.lrplugin/Info.lua",
     file: p("plugin", "LightroomMCP.lrplugin", "Info.lua"),
     read() {
