@@ -1,7 +1,7 @@
 {
   "name": "lightroom-classic-ai",
   "displayName": "Lightroom Classic AI",
-  "version": "3.2.5",
+  "version": "3.2.6",
   "description": "Edit Adobe Lightroom Classic from a conversation: AI and local masks, tone and white balance, denoise, metadata, virtual copies, export. Reads and writes the real catalog through a bundled plugin, and renders JPEG previews inline so you can see each edit.",
   "author": {
     "name": "par4987",

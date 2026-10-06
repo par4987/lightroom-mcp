@@ -4,7 +4,7 @@
       "command": "npx",
       "args": [
         "-y",
-        "@pired/lightroom-mcp@3.2.5"
+        "@pired/lightroom-mcp@3.2.6"
       ],
       "env": {
         "LIGHTROOM_MCP_REQUEST_PORT": "58763",
