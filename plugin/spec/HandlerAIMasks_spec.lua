@@ -193,6 +193,12 @@ local function setup(opts)
         LrTasks = {
             sleep = function() end,
             startAsyncTask = function(fn) fn() end,
+            -- The handler guards execute with LrTasks.pcall, not plain pcall:
+            -- execute yields internally and plain pcall is a C function, so
+            -- Lightroom refuses the yield with "Yielding is not allowed within a
+            -- C or metamethod call". The real LrTasks.pcall is the one that
+            -- permits it. See HandlerAIMasks.lua and HandlerOrganization.lua.
+            pcall = pcall,
             -- The real capture runs `powershell -File ... -ResultPath "..."`
             -- and reads its verdict from that file (LrTasks.execute has no
             -- stdout). Parse the path out of the command and write the

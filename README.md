@@ -415,7 +415,7 @@ Estructura del repo:
 - `plugin/LightroomMCP.lrplugin/` — plugin Lua (handlers `Handler*.lua`, dispatcher en `PluginInfoProvider.lua`).
 - `examples/deepseek-harness/` — harness DeepSeek sin dependencias (MCP→function calling).
 - `examples/configs/` — configuraciones listas para Claude Desktop, Claude Code, clientes stdio genéricos y puente HTTP.
-- `skills/` — skill de presets incluida del proyecto original.
+- `skills/` — dos skills: `photo-edit-loop` (el ciclo editar→renderizar→mirar→corregir, con el gate de `size_usable`) y `photo-edit-advisor` (polvo de sensor vs lente y cuánto pueden subir las sombras antes de que el ruido rompa la foto). Se distribuyen con el plugin de Claude Code.
 - `server/scripts/sync-bundle.mjs` — copia plugin + harness + configs dentro de `server/dist/` al compilar, para que el paquete npm sea autosuficiente.
 - `scripts/run_lua_specs.py` — runner alternativo de los specs Lua (shim de busted sobre lupa) para entornos sin Lua.
 
@@ -425,6 +425,33 @@ Estructura del repo:
 2. Registrala en la tabla `DISPATCH` de `PluginInfoProvider.lua`.
 3. Agregá el contrato en `server/src/tool-contracts.ts` (el test de consistencia Lua↔TS lo exige).
 4. Declará globals nuevas del SDK en `lightroom.yml` (selene).
+
+## Estado de seguridad de dependencias
+
+El **runtime** que instala un cliente está limpio. Verificado con una instalación real del paquete publicado:
+
+```bash
+npm install --production @pired/lightroom-mcp
+# found 0 vulnerabilities — 9 paquetes en total
+```
+
+Las dependencias son solo dos: `@modelcontextprotocol/server` y `ajv`. Las
+vulnerabilidades que aparezcan en `npm audit` sobre el repo vienen de la
+**cadena de desarrollo** (`jest` → `@jest/transform` → `babel-plugin-istanbul`
+→ `@istanbuljs/load-nyc-config` → `js-yaml` → `argparse` → `sprintf-js`), que
+no se instala en el servidor de nadie.
+
+`proxy-addr`, `fast-uri` y `brace-expansion` están pineados por `overrides`
+porque las versiones que pedían sus padres seguían siendo vulnerables en el
+lockfile.
+
+Pendiente sin arreglo posible: [GHSA-hp3w-g68c-fv3c](https://github.com/advisories/GHSA-hp3w-g68c-fv3c)
+afecta a `sprintf-js` con `range: *` — **ninguna** versión publicada está
+parcheada, y la última es la 1.1.3. El "fix" que ofrece `npm audit` es bajar
+`ts-jest` a 29.1.2, lo que rompería el build, así que no se aplica. Es
+DoS por especificadores de precisión sin límite, alcanzable solo si alguien
+ejecuta los tests con entrada hostil; no llega al runtime. Se revisa cuando
+haya una versión parcheada.
 
 ## Créditos y licencia
 

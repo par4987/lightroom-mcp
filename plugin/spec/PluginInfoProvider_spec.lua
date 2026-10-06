@@ -1,5 +1,28 @@
 local helper = require 'spec_helper'
 
+-- The one place the yield rule is modelled. Installed once, at file scope.
+--
+-- Plain pcall is a C function, so a yield inside it is refused by Lightroom
+-- with "Yielding is not allowed within a C or metamethod call". LrTasks.execute
+-- yields internally, which is why guarding it with plain pcall broke the
+-- SendKeys helpers: the helper never wrote its result file, the handler
+-- reported failure, and the work it had already dispatched went on to happen.
+-- LrTasks.pcall is the SDK call that permits the yield inside a protected call.
+--
+-- So: a plain pcall clears the flag, LrTasks.pcall and a task body set it, and
+-- LrTasks.execute refuses when it is clear. The wrapper is transparent - it
+-- forwards args and returns exactly what pcall would - so nothing else in the
+-- spec notices it.
+local REAL_PCALL = pcall
+local _yieldable = false
+_G.pcall = function(fn, ...)
+    local restore = _yieldable
+    _yieldable = false
+    local results = { REAL_PCALL(fn, ...) }
+    _yieldable = restore
+    return table.unpack(results, 1, #results)
+end
+
 -- Stub everything PluginInfoProvider / PluginInit pull in so requiring them
 -- has no real side effects. The lifecycle logic under test lives in the
 -- module body + resetForReload + PluginInit wiring; none of it binds a
@@ -33,16 +56,20 @@ local function installStubs(prefs, asyncTasks, opts)
     -- it cannot - which is why LrTasks.execute was refused with "Yielding is
     -- not allowed within a C or metamethod call", and why LrTasks.pcall exists.
     -- `yieldable` starts false (a module body is not a task); a task body or an
-    -- LrTasks.pcall sets it true; a PLAIN pcall sets it false. realPcall is
-    -- captured first so LrTasks.pcall does not trip its own counter.
-    local realPcall = pcall
-    local unpackFn = table.unpack or unpack
-    local yieldable = false
-    _G.pcall = function(fn, ...)
-        local previous, wasYieldable = yieldable, false
-        local results = { realPcall(fn, ...) }
-        yieldable = previous
-        return unpackFn(results, 1, #results)
+    -- LrTasks.pcall sets it true; a PLAIN pcall sets it false.
+    --
+    -- REAL_PCALL is captured ONCE, here at file scope. installStubs runs per
+    -- spec, so re-reading `pcall` each time would capture the previous spec's
+    -- wrapper as "the real" pcall: LrTasks.pcall would set yieldable=true and
+    -- then immediately hand off to a wrapper that set it back to false. That
+    -- nests silently and makes every guarded call look refused.
+        -- LrTasks.pcall, which is what a handler must use to permit the yield.
+    local function lrtasksPcall(fn, ...)
+        local restore = _yieldable
+        _yieldable = true
+        local results = { REAL_PCALL(fn, ...) }
+        _yieldable = restore
+        return table.unpack(results, 1, #results)
     end
 
     helper.installImport({
@@ -63,18 +90,13 @@ local function installStubs(prefs, asyncTasks, opts)
                 if opts.onSleep then opts.onSleep(_G.LightroomMCP_State) end
             end,
             execute = function()
-                if not yieldable then
+                if not _yieldable then
                     error("Yielding is not allowed within a C or metamethod call")
                 end
                 return true
             end,
-            canYield = function() return yieldable end,
-            pcall = function(fn, ...)
-                local previous, wasYieldable = yieldable, true
-                local results = { realPcall(fn, ...) }
-                yieldable = previous
-                return unpackFn(results, 1, #results)
-            end,
+            canYield = function() return _yieldable end,
+            pcall = lrtasksPcall,
         },
         LrLogger = helper.defaultLrLogger(),
         LrDialogs = { message = function() end },
@@ -82,15 +104,27 @@ local function installStubs(prefs, asyncTasks, opts)
             postAsyncTaskWithContext = function(name, fn)
                 if opts.tasksStarted then table.insert(opts.tasksStarted, name) end
                 if not opts.runTask then return end
-                -- A fresh function context, which may yield.
-                local previous, wasYieldable = yieldable, true
-                local context = {
-                    addCleanupHandler = function(_, handler)
-                        if opts.cleanups then table.insert(opts.cleanups, handler) end
-                    end,
-                }
-                fn(context)
-                yieldable = previous
+                -- Record it in the same queue startAsyncTask uses, so a spec
+                -- that wants to inspect or defer a queued task does not have
+                -- to care which spawner production reached for. Run it here;
+                -- runTask=false is how a spec defers.
+                local function run()
+                    -- A fresh function context, which may yield.
+                    local restore = _yieldable
+                    _yieldable = true
+                    local context = {
+                        addCleanupHandler = function(_, handler)
+                            if opts.cleanups then table.insert(opts.cleanups, handler) end
+                        end,
+                    }
+                    fn(context)
+                    _yieldable = restore
+                end
+                if asyncTasks and opts.deferTasks and name == "LightroomMCPDispatch" then
+                    table.insert(asyncTasks, run)
+                else
+                    run()
+                end
             end,
         },
         LrSocket = {
@@ -889,6 +923,7 @@ describe("cooperative shutdown at Lightroom quit (issue 195)", function()
         local binds, asyncTasks = {}, {}
         installStubs(nil, asyncTasks, {
             runTask = true, stopLoopOnSleep = true, cleanups = {}, capturedBinds = binds,
+            deferTasks = true,
         })
         package.loaded.JSON = nil
         local mod = loadInfoProvider()
@@ -906,6 +941,7 @@ describe("cooperative shutdown at Lightroom quit (issue 195)", function()
         local handlerCalls = 0
         installStubs(nil, asyncTasks, {
             runTask = true, stopLoopOnSleep = true, cleanups = {}, capturedBinds = binds,
+            deferTasks = true,
         })
         package.loaded.JSON = nil
         package.loaded.HandlerSearch = {
@@ -1065,10 +1101,27 @@ describe("a handler can run a child process (the yield rule)", function()
             capturedBinds = binds, sends = sends,
         })
         package.loaded.JSON = nil
+        -- Must come AFTER installStubs: that ends with
+        -- `package.loaded[name] = {}` for every HANDLER_MODULES entry, so an
+        -- assignment made before it would be overwritten and the handler would
+        -- resolve to nil.
         package.loaded.HandlerOrganization = {
+            -- Mirrors sendRemoveKeys' shape: guard execute, then act on whether
+            -- it worked. With a guard that permits the yield the helper writes
+            -- its verdict and the handler succeeds; with plain pcall the yield
+            -- is refused, no verdict is written, and the handler raises the
+            -- "no result (execute ok=false, status ...)" error - which is
+            -- precisely what remove_from_catalog reported while removing the
+            -- photos anyway.
             removeFromCatalog = function()
                 local LrTasks = import 'LrTasks'
-                guard(LrTasks, function() return LrTasks.execute('powershell -File remove-helper.ps1') end)
+                local execOk, execResult = guard(LrTasks, function()
+                    return LrTasks.execute('powershell -File remove-helper.ps1')
+                end)
+                if not execOk then
+                    error("remove helper produced no result (execute ok="
+                        .. tostring(execOk) .. ", status " .. tostring(execResult) .. ")")
+                end
                 return { success = true }
             end,
         }

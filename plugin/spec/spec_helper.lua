@@ -337,6 +337,7 @@ function M.fakeCatalog(opts)
     local insideReadAccess = false
     local queriedInsideReadAccess = false
     local selectionCall = nil
+local copyCounter = 0
     local function markQuery()
         if insideReadAccess then queriedInsideReadAccess = true end
     end
@@ -427,6 +428,33 @@ function M.fakeCatalog(opts)
             selectionCall = { active = activePhoto, photos = selected }
         end,
         getSelectionCall = function() return selectionCall end,
+        -- photo:createVirtualCopy() was removed from the SDK, so the handler
+        -- uses catalog:createVirtualCopies(), which clones the CURRENT
+        -- SELECTION and then selects the copies it made. That second half is
+        -- the whole reason the handler re-selects the source on every
+        -- iteration, so the mock has to reproduce it: without this the spec
+        -- would pass a handler that copies the copies.
+        createVirtualCopies = function(self)
+            local sel = selectionCall and selectionCall.photos or {}
+            if #sel == 0 then return {} end
+            local clones = {}
+            for _, src in ipairs(sel) do
+                local n = copyCounter + 1
+                copyCounter = n
+                local clone = M.fakePhoto({
+                    id = tostring(src.localIdentifier) .. "-vc",
+                    -- Read through the SDK methods, not off fields: fakePhoto
+                    -- keeps its metadata behind getRawMetadata /
+                    -- getFormattedMetadata, exactly as a real photo does.
+                    path = src:getRawMetadata("path"),
+                    fileName = src:getFormattedMetadata("fileName"),
+                })
+                table.insert(clones, clone)
+            end
+            selectionCall = { active = clones[1], photos = clones }
+            return clones
+        end,
+        getCopyCounter = function() return copyCounter end,
         withWriteAccessDo = function(_, actionName, fn)
             writeAccessCount = writeAccessCount + 1
             enterWriteGate(actionName)

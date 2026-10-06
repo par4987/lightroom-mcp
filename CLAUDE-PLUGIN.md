@@ -1,8 +1,8 @@
 # Claude Code plugin
 
 This repository is also a Claude Code plugin. Installing it gives you the
-`lightroom` MCP server and the `photo-edit-advisor` skill in one step, instead
-of wiring the server into Claude Code by hand.
+`lightroom` MCP server and two skills in one step, instead of wiring the server
+into Claude Code by hand.
 
 ## Install
 
@@ -12,8 +12,20 @@ From a clone of this repository:
 claude --plugin-dir /path/to/lightroom-mcp
 ```
 
-Then `/mcp` should list `plugin:lightroom-classic-ai:lightroom`, and the skill
-is available as `/lightroom-classic-ai:photo-edit-advisor`.
+Then `/mcp` should list `plugin:lightroom-classic-ai:lightroom`, and the skills
+are available as `/lightroom-classic-ai:photo-edit-loop` and
+`/lightroom-classic-ai:photo-edit-advisor`.
+
+## The two skills
+
+| Skill | What it is for |
+| --- | --- |
+| `photo-edit-loop` | The edit-verify loop. Propose a change, render it, **look at the render**, correct it, then `copy_develop_settings` to the batch. Teaches checking `size_usable`, so a stale thumbnail is not mistaken for a failed edit. |
+| `photo-edit-advisor` | Measurements an agent cannot make by eye: sensor vs lens dust, and how far the shadows can lift before noise breaks the photo. Needs numpy + pillow. |
+
+They are deliberately not merged. One starts from a photo someone wants edited
+and verifies by looking; the other starts from measurements and bounds the
+proposal before anything is applied.
 
 To keep it installed across sessions, add the repository as a marketplace or
 commit the plugin folder to your own marketplace.

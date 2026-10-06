@@ -1,5 +1,57 @@
 local helper = require 'spec_helper'
 
+describe("SendKeys helpers guard execute correctly", function()
+    -- LrTasks.execute yields internally. Guarding it with plain pcall puts a C
+    -- function on the stack, so Lightroom refuses the yield with "Yielding is
+    -- not allowed within a C or metamethod call". The helper then never wrote
+    -- its result file, the handler reported failure, and the keys it had
+    -- already dispatched went on to remove the photos anyway.
+    --
+    -- The behavioural specs elsewhere in this file drive a stubbed execute and
+    -- cannot see this: they prove the handler's logic, not which guard it used.
+    -- This reads the source, so swapping the guard back fails here.
+    --
+    -- One test, all three handlers: they were all wrong the same way, and a
+    -- per-file test would let a fourth be added without the guard.
+    -- Resolved from package.path rather than the cwd: busted and the lupa
+    -- runner put the plugin dir on package.path and neither is guaranteed to
+    -- run from the repo root.
+    local function handlerSource(name)
+        for entry in package.path:gmatch("[^;]+") do
+            local path = entry:gsub("%?%.lua$", "") .. name .. ".lua"
+            local fh = io.open(path, "r")
+            if fh then
+                local src = fh:read("*a")
+                fh:close()
+                return src
+            end
+        end
+        return nil
+    end
+
+    local GUARDED = {
+        { "HandlerOrganization", "sendRemoveKeys" },
+        { "HandlerAI", "sendNativeDenoiseKeys" },
+        { "HandlerAIMasks", "warning capture" },
+    }
+
+    for _, entry in ipairs(GUARDED) do
+        local file, what = entry[1], entry[2]
+
+        it(file .. " guards LrTasks.execute with LrTasks.pcall", function()
+            local src = handlerSource(file)
+            assert.is_not_nil(src, "cannot read " .. file .. ".lua")
+
+            -- Exactly where the yield happens.
+            local guarded = src:find("LrTasks%.pcall%(function%(%) return LrTasks%.execute")
+            assert.is_not_nil(guarded, file .. " must guard execute with LrTasks.pcall")
+
+            local unguarded = src:find("[^%.%w_]pcall%(function%(%) return LrTasks%.execute")
+            assert.is_nil(unguarded, file .. " (" .. what .. ") still guards execute with plain pcall")
+        end)
+    end
+end)
+
 local function setup(opts)
     opts = opts or {}
     local catalog = helper.fakeCatalog(opts)
