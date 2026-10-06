@@ -27,6 +27,10 @@ They are deliberately not merged. One starts from a photo someone wants edited
 and verifies by looking; the other starts from measurements and bounds the
 proposal before anything is applied.
 
+[GUIA-SKILLS.md](GUIA-SKILLS.md) is the long-form guide: when to pick each,
+the loop step by step, the `size_usable` trap, batching, honest limits, and
+the evals.
+
 To keep it installed across sessions, add the repository as a marketplace or
 commit the plugin folder to your own marketplace.
 

@@ -426,6 +426,22 @@ Estructura del repo:
 3. Agregá el contrato en `server/src/tool-contracts.ts` (el test de consistencia Lua↔TS lo exige).
 4. Declará globals nuevas del SDK en `lightroom.yml` (selene).
 
+## Skills
+
+Este repo trae dos skills que se complementan. Cuál usar depende de si ya
+sabés qué querés cambiar:
+
+| Skill | Para qué | Cuándo |
+| --- | --- | --- |
+| **`photo-edit-loop`** | El ciclo editar → renderizar → **mirar** → corregir → lote | "Subile la exposición", "aplicá este look a la carpeta" |
+| **`photo-edit-advisor`** | Medir polvo de sensor vs lente, y cuánto pueden subir las sombras antes de que el ruido rompa la foto | "Limpiá el polvo", "¿cuánto puedo subir las sombras?" |
+
+Ambas parten proponiendo y esperan un sí antes de aplicar nada.
+
+**Guía completa:** [GUIA-SKILLS.md](GUIA-SKILLS.md) — cuándo elegir cada una,
+el bucle paso a paso, la trampa de `size_usable`, cómo montar un lote, los
+límites honestos, y los evals.
+
 ## Estado de seguridad de dependencias
 
 El **runtime** que instala un cliente está limpio. Verificado con una instalación real del paquete publicado:
