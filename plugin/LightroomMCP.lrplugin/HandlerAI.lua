@@ -179,7 +179,11 @@ local function sendNativeDenoiseKeys(automation)
 
     local command = 'powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "'
         .. scriptPath .. '"'
-    local execOk, execResult = pcall(function() return LrTasks.execute(command) end)
+    -- LrTasks.pcall, NOT pcall. LrTasks.execute yields internally, and plain
+    -- pcall is a C function, so yielding across it fails with "Yielding is not
+    -- allowed within a C or metamethod call". LrTasks.pcall exists precisely to
+    -- let a yield happen inside the protected call.
+    local execOk, execResult = LrTasks.pcall(function() return LrTasks.execute(command) end)
 
     -- Give the filesystem a beat to flush the result file before reading it.
     local resultContent = nil

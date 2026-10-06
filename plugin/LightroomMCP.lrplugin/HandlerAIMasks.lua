@@ -344,7 +344,10 @@ local function captureWindowScreenshot(filename, label)
         .. '" -ResultPath "' .. resultPath
         .. '" -OutPath "' .. outPath
         .. '" -WindowTitle "' .. WARN_SHOT_WINDOW_TITLE .. '"'
-    local execOk, execResult = pcall(function() return LrTasks.execute(command) end)
+    -- LrTasks.pcall, NOT pcall: LrTasks.execute yields, and plain pcall is a C
+    -- function, so the yield is refused with "Yielding is not allowed within a
+    -- C or metamethod call". See HandlerAI.lua for the longer note.
+    local execOk, execResult = LrTasks.pcall(function() return LrTasks.execute(command) end)
 
     -- Give the filesystem a beat to flush the result file before reading it.
     local resultContent = nil

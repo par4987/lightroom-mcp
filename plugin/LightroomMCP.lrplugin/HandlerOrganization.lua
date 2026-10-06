@@ -865,7 +865,13 @@ local function sendRemoveKeys(photoCount)
         .. scriptPath
         .. '" -ResultPath "' .. resultPath
         .. '" -KeyDelay ' .. tostring(600)
-    local execOk, execResult = pcall(function() return LrTasks.execute(command) end)
+    -- LrTasks.pcall, NOT pcall. LrTasks.execute yields internally and plain
+    -- pcall is a C function, so the yield is refused: "Yielding is not allowed
+    -- within a C or metamethod call". The helper then never wrote its result
+    -- file and remove_from_catalog reported failure - even though the keys had
+    -- already gone out and the photos WERE removed. LrTasks.pcall is the SDK
+    -- call that permits a yield inside the protected call.
+    local execOk, execResult = LrTasks.pcall(function() return LrTasks.execute(command) end)
 
     local resultContent = nil
     for _ = 1, 10 do

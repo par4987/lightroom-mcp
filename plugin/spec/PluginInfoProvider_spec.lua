@@ -28,21 +28,33 @@ local HANDLER_MODULES = {
 --   sends          -- array; every line written to a bound socket lands here
 local function installStubs(prefs, asyncTasks, opts)
     opts = opts or {}
+    -- Yield modelling. Lightroom's rule is not "are we in a task" but "can
+    -- yielding happen RIGHT NOW". A plain pcall is a C function, so inside one
+    -- it cannot - which is why LrTasks.execute was refused with "Yielding is
+    -- not allowed within a C or metamethod call", and why LrTasks.pcall exists.
+    -- `yieldable` starts false (a module body is not a task); a task body or an
+    -- LrTasks.pcall sets it true; a PLAIN pcall sets it false. realPcall is
+    -- captured first so LrTasks.pcall does not trip its own counter.
+    local realPcall = pcall
+    local unpackFn = table.unpack or unpack
+    local yieldable = false
+    _G.pcall = function(fn, ...)
+        local previous, wasYieldable = yieldable, false
+        local results = { realPcall(fn, ...) }
+        yieldable = previous
+        return unpackFn(results, 1, #results)
+    end
+
     helper.installImport({
         LrTasks = {
             startAsyncTask = function(fn)
-                -- A bare startAsyncTask runs the body in the CALLER's function
-                -- context. Production callers here are LrSocket C callbacks, so
-                -- mark the body as non-yieldable and let LrTasks.execute below
-                -- reproduce what Lightroom does from a C frame.
-                local previous = _G.LightroomMCP_InCContext
-                _G.LightroomMCP_InCContext = true
+                local previous, wasYieldable = yieldable, true
                 if asyncTasks then
                     table.insert(asyncTasks, fn)
                 else
                     fn()
                 end
-                _G.LightroomMCP_InCContext = previous
+                yieldable = previous
             end,
             sleep = function()
                 if opts.stopLoopOnSleep and _G.LightroomMCP_State then
@@ -50,16 +62,19 @@ local function installStubs(prefs, asyncTasks, opts)
                 end
                 if opts.onSleep then opts.onSleep(_G.LightroomMCP_State) end
             end,
-            -- Lightroom refuses to yield out of a C or metamethod call. This is
-            -- the exact refusal remove_from_catalog hit, because the helper that
-            -- replays the Delete keys runs LrTasks.execute.
             execute = function()
-                if _G.LightroomMCP_InCContext then
+                if not yieldable then
                     error("Yielding is not allowed within a C or metamethod call")
                 end
                 return true
             end,
-            pcall = pcall,
+            canYield = function() return yieldable end,
+            pcall = function(fn, ...)
+                local previous, wasYieldable = yieldable, true
+                local results = { realPcall(fn, ...) }
+                yieldable = previous
+                return unpackFn(results, 1, #results)
+            end,
         },
         LrLogger = helper.defaultLrLogger(),
         LrDialogs = { message = function() end },
@@ -67,16 +82,15 @@ local function installStubs(prefs, asyncTasks, opts)
             postAsyncTaskWithContext = function(name, fn)
                 if opts.tasksStarted then table.insert(opts.tasksStarted, name) end
                 if not opts.runTask then return end
-                -- A fresh function context is yieldable, whatever called us.
-                local previous = _G.LightroomMCP_InCContext
-                _G.LightroomMCP_InCContext = false
+                -- A fresh function context, which may yield.
+                local previous, wasYieldable = yieldable, true
                 local context = {
                     addCleanupHandler = function(_, handler)
                         if opts.cleanups then table.insert(opts.cleanups, handler) end
                     end,
                 }
                 fn(context)
-                _G.LightroomMCP_InCContext = previous
+                yieldable = previous
             end,
         },
         LrSocket = {
@@ -1025,19 +1039,26 @@ describe("cooperative shutdown at Lightroom quit (issue 195)", function()
 
 end)
 
-describe("dispatch runs in a yieldable context", function()
+describe("a handler can run a child process (the yield rule)", function()
     -- remove_from_catalog drives Lightroom's own Remove command by writing a
-    -- PowerShell helper and running it through LrTasks.execute. onMessage is a
-    -- C callback, and a bare LrTasks.startAsyncTask inherits that C frame, so
-    -- Lightroom refuses the yield and the handler reported
-    -- "Yielding is not allowed within a C or metamethod call" - while the keys
-    -- had already gone out, leaving a tool that fails loudly and deletes anyway.
-    -- The dispatch must therefore run via LrFunctionContext.postAsyncTaskWithContext.
+    -- PowerShell helper and running it through LrTasks.execute, which yields
+    -- internally. It used to wrap that call in a PLAIN pcall, which is a C
+    -- function, so Lightroom refused the yield: "Yielding is not allowed
+    -- within a C or metamethod call". The helper never wrote its result file,
+    -- the handler reported failure - and the photos were removed anyway,
+    -- because the keys had already gone out.
+    --
+    -- LrTasks.pcall is the SDK call that permits a yield inside the protected
+    -- call. Dispatch already runs each handler inside LrTasks.pcall, so a
+    -- handler reaches execute with yielding available; the handler's own inner
+    -- pcall is what has to be LrTasks.pcall, not pcall.
     local function request(state, action)
         return '{"id":1,"action":"' .. action .. '","hello":"' .. state.token .. '"}'
     end
 
-    local function dispatchRemoveFromCatalog()
+    -- `guard` is what the handler wraps execute in, so a spec can show that the
+    -- choice of guard is the whole difference.
+    local function dispatchRemoveFromCatalog(guard)
         local binds, sends = {}, {}
         installStubs(nil, nil, {
             runTask = true, stopLoopOnSleep = true, cleanups = {},
@@ -1047,7 +1068,7 @@ describe("dispatch runs in a yieldable context", function()
         package.loaded.HandlerOrganization = {
             removeFromCatalog = function()
                 local LrTasks = import 'LrTasks'
-                LrTasks.execute('powershell -File remove-helper.ps1')
+                guard(LrTasks, function() return LrTasks.execute('powershell -File remove-helper.ps1') end)
                 return { success = true }
             end,
         }
@@ -1059,12 +1080,28 @@ describe("dispatch runs in a yieldable context", function()
         return sends
     end
 
-    it("lets a handler run LrTasks.execute without hitting the C-frame refusal", function()
-        local sends = dispatchRemoveFromCatalog()
+    it("reaches LrTasks.execute when the handler guards it with LrTasks.pcall", function()
+        local sends = dispatchRemoveFromCatalog(function(LrTasks, fn)
+            return LrTasks.pcall(fn)
+        end)
 
         assert.is_not_nil(sends[1])
         assert.is_not_nil(sends[1]:find('"success"', 1, true))
         assert.is_nil(sends[1]:find('Yielding is not allowed', 1, true))
+    end)
+
+    it("is refused when the handler guards it with plain pcall", function()
+        -- This is the regression. It documents WHY the call has to be
+        -- LrTasks.pcall: swap it back to pcall and this spec fails here instead
+        -- of failing only inside Lightroom, where the tool reports failure and
+        -- deletes the photos regardless.
+        local sends = dispatchRemoveFromCatalog(function(_, fn)
+            return pcall(fn)
+        end)
+
+        assert.is_not_nil(sends[1])
+        assert.is_not_nil(sends[1]:find('Yielding is not allowed', 1, true))
+        assert.is_nil(sends[1]:find('"success"', 1, true))
     end)
 
     it("queues the dispatch through postAsyncTaskWithContext, not startAsyncTask", function()
